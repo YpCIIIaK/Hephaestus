@@ -68,8 +68,8 @@ export function Sidebar({ isMobile }: { isMobile?: boolean }) {
           </div>
           {!collapsed && (
             <div className="flex flex-col">
-              <span className="text-lg font-semibold text-sidebar-foreground">LLM Arena</span>
-              <span className="text-xs text-muted-foreground">Multi-Model AI</span>
+              <span className="text-lg font-semibold text-sidebar-foreground">Ἥφαιστος</span>
+              <span className="text-xs text-muted-foreground">LLM Arena</span>
             </div>
           )}
         </div>

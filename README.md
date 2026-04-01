@@ -1,10 +1,13 @@
-# LLM Arena (AI Aggregator App)
+# Hephaestus (Ἥφαιστος) - LLM Arena
 
 Web app for multi-model chat and configurable DAG pipelines ("Arena") powered by OpenRouter.
 
 - Multi-model chat: send one prompt to multiple models and compare results.
-- Arena pipelines: build a directed acyclic graph (DAG) of nodes (prompt/model/validator/aggregator/search/file/router) and execute it.
-- Analytics: track token usage and estimated cost.
+- Arena pipelines: build a directed acyclic graph (DAG) of nodes (prompt/model/validator/aggregator/search/file/router/code) and execute it.
+- Analytics: track token usage, estimated cost, and visualize with Waterfall/Gantt charts.
+- AI File Editing: AI can create, edit, and delete files via chat and pipelines.
+- Smart Fallback Chain: automatic fallback to backup models on timeout/error.
+- RAG Knowledge Base: BM25 search across indexed project files.
 
 ## Tech stack
 
@@ -76,20 +79,20 @@ Web app for multi-model chat and configurable DAG pipelines ("Arena") powered by
 
 ### Tabs
 
-- **Chat** — multi-model chat.
-- **Arena** — pipeline designer/executor.
-- **Analytics** — usage and cost dashboard.
+- **Chat** — multi-model chat with AI File Editing (list/read/write/edit/delete files).
+- **Arena** — pipeline designer/executor with Dry Run.
+- **Analytics** — usage dashboard with Waterfall/Gantt charts and PDF/CSV export.
 
 ### Data model overview
 
 Main domain state lives in `lib/store.ts` (Zustand + persist).
 
-- **Models**: list of available LLMs with settings (temperature, maxTokens, pricing, webSearch).
+- **Models**: list of available LLMs with settings (temperature, maxTokens, pricing, webSearch, **fallbackModels**, **fallbackTimeoutMs**, **fallbackMode**, **contextCompression**).
 - **Arena graph**: `nodes` + `edges`.
 - **Configs**: saved pipeline presets.
 - **Chat**: `messages` + `responses` and `historicalChats`.
 - **Usage**: `globalUsage`, `usageHistory`, `sessionCost`, `maxSessionBudget`.
-- **Knowledge Base**: list of file paths to inject into prompts.
+- **Knowledge Base**: list of file paths to inject into prompts + **BM25 RAG index** with chunking.
 
 ## Arena: pipelines (DAG)
 
@@ -106,35 +109,29 @@ Node type is `ArenaNode.type`:
 
 - `prompt`
   - Produces a text output via a template.
-  - Supports placeholders:
-    - `{{input}}` / `{{context}}` — upstream context
-    - `{{global}}` — injected Knowledge Base content
-  - If you forget `{{input}}`/`{{context}}`, the executor auto-appends `{{input}}`.
+  - Supports placeholders: `{{input}}`, `{{context}}`, `{{global}}`.
 
 - `model`
   - Calls `/api/chat` to stream an LLM answer.
-  - Input comes from upstream nodes (or initial pipeline input).
-  - Token count is computed (prompt vs completion) and cost is estimated.
+  - **Context Compression**: automatic compression of long contexts.
+  - **Smart Fallback Chain**: fallback to backup models on timeout/error.
 
-- `validator`
-  - Calls an LLM to validate/summarize/score multiple upstream outputs.
-  - Built-in modes:
-    - `consensus`
-    - `scoring`
-    - `custom` (uses node prompt)
+- `validator` — validation/summary/scoring of upstream outputs (consensus/scoring/custom).
 
-- `aggregator`
-  - Calls an LLM to merge upstream outputs into a single final answer.
+- `aggregator` — merge upstream outputs into a single final answer.
 
-- `search`
-  - Calls `/api/search` to get web results.
+- `search` — web search via DuckDuckGo.
 
 - `file`
-  - Reads file content via `/api/files`.
+  - File reading, **Smart Read** for large files.
+  - **Global Knowledge**: injects file into context of all AI nodes.
 
-- `router`
-  - Runs an LLM classifier and activates only the matched outgoing path.
-  - Unmatched downstream nodes are marked `skipped`.
+- `router` — LLM classifier that activates only the matched outgoing path.
+
+- `code`
+  - **Create/edit/delete files** via `/api/files/edit`.
+  - Can use AI for code generation.
+  - Operations: `write`, `edit`, `append`, `delete`.
 
 ### Topology and parallelism
 
@@ -172,26 +169,67 @@ All routes live in `app/api/*`.
 
 - `POST /api/chat`
   - Proxies OpenRouter streaming Chat Completions.
-  - Supports tool-based web search (when enabled) by detecting tool calls and performing server-side search.
+  - **Tools**: web_search, list_files, read_file, write_file, edit_file, delete_file.
+  - **Multi-step tool chains**: recursive processing of tool chains.
 
-- `GET /api/models`
-  - Fetches the OpenRouter models list and maps it to the app `Model` type.
+- `GET /api/models` — fetch OpenRouter models.
 
-- `GET /api/files`
-  - Returns a file tree of the current workspace (excluding some directories).
+- `GET /api/files` — file tree of project.
 
-- `POST /api/files`
-  - Reads a specific file by relative path.
+- `POST /api/files` — read specific file.
 
-- `POST /api/search`
-  - Runs DuckDuckGo Lite search and returns formatted results.
+- `PATCH /api/files/edit` — file editing (write/edit/append/delete) with backups.
 
-## Analytics: tokens and cost
+- `POST /api/search` — DuckDuckGo Lite web search.
 
-- Token counting uses `lib/tokenizer.ts` (`js-tiktoken`) when possible.
-- Cost estimation:
-  - Prefers model pricing returned from OpenRouter (`/api/models`) or from your configured `Model.pricing`.
-  - Falls back to a heuristic if pricing is missing.
+- `POST /api/knowledge/search` — **BM25 RAG search** over indexed files.
+
+- `PUT /api/knowledge/index` — index file for RAG.
+
+- `GET /api/knowledge/stats` — RAG index statistics.
+
+## AI File Editing & Tools
+
+AI in chat can use tools:
+
+- `list_files` — list project files.
+- `read_file` — read file.
+- `write_file` — create/overwrite file.
+- `edit_file` — edit (str_replace).
+- `delete_file` — delete file.
+- `web_search` — web search.
+
+### Multi-step Tool Chains
+
+AI can execute chains: `list_files → delete_file(file1) → write_file(new)` — all in one request.
+
+## Smart Fallback Chain
+
+Model nodes support fallback chain:
+
+- `fallbackModels`: backup model IDs.
+- `fallbackTimeoutMs`: timeout before fallback (default: 5000ms).
+- `fallbackMode`: `'timeout'` (time-based) or `'on_error'` (only on error).
+
+## Context Compression
+
+Automatic compression of long contexts in model nodes:
+
+- `enabled`: enable compression.
+- `thresholdTokens`: threshold (default: 1000).
+- `targetRatio`: target compression 0.0-1.0.
+
+## Knowledge Base (RAG)
+
+- **BM25 search** over indexed files.
+- **Smart Read**: selective reading for large files.
+- **Global Knowledge**: automatic inject into prompts.
+
+## Analytics & Export
+
+- **Waterfall/Gantt**: pipeline execution visualization.
+- **Export**: PDF and CSV reports.
+- **Metrics**: prompt/completion tokens, cost, latency.
 
 ## Troubleshooting
 
@@ -213,9 +251,9 @@ All routes live in `app/api/*`.
 ## Security notes (important)
 
 - **Never commit `.env`**. Your OpenRouter key must be treated as a secret.
-- The `POST /api/files` endpoint can read **any file within the project root**, which may include secrets (for example `.env`).
-  - This is fine for local development, but **unsafe for public deployments**.
-  - If you deploy publicly, you should restrict `/api/files` (auth + allowlist paths) or remove it.
+- The `/api/files` and `/api/files/edit` endpoints can read and modify **any file within the project root**.
+- This is fine for local development, but **unsafe for public deployments**.
+- For production: add auth + path allowlist.
 
 ## Roadmap ideas
 

@@ -1,10 +1,13 @@
-# LLM Arena (AI Aggregator App)
+# Hephaestus (Ἥφαιστος) - LLM Arena
 
 Веб-приложение для многомодельного чата и настраиваемых DAG-пайплайнов ("Arena") на базе OpenRouter.
 
-- Многомодельный чат: отправь один промпт нескольким моделям и сравни результаты.
-- Arena-пайплайны: строй направленный ациклический граф (DAG) из узлов (prompt/model/validator/aggregator/search/file/router) и запускай его.
-- Аналитика: отслеживай использование токенов и оценочную стоимость.
+- **Многомодельный чат**: отправь один промпт нескольким моделям и сравни результаты.
+- **Arena-пайплайны**: строй направленный ациклический граф (DAG) из узлов (prompt/model/validator/aggregator/search/file/router/code) и запускай его.
+- **Аналитика**: отслеживай использование токенов, оценочную стоимость и Waterfall диаграммы.
+- **AI File Editing**: ИИ может создавать, редактировать и удалять файлы через чат и пайплайны.
+- **Smart Fallback Chain**: автоматический fallback на резервные модели при timeout/error.
+- **RAG Knowledge Base**: BM25-поиск по индексированным файлам проекта.
 
 ## Технологический стек
 
@@ -76,20 +79,20 @@
 
 ### Вкладки
 
-- **Chat** — многомодельный чат.
-- **Arena** — конструктор/исполнитель пайплайнов.
-- **Analytics** — дашборд использования и стоимости.
+- **Chat** — многомодельный чат с AI File Editing (list/read/write/edit/delete файлов).
+- **Arena** — конструктор/исполнитель пайплайнов с Dry Run.
+- **Analytics** — дашборд использования, стоимости, Waterfall диаграммы и экспорт PDF/CSV.
 
 ### Обзор модели данных
 
 Основное доменное состояние живёт в `lib/store.ts` (Zustand + persist).
 
-- **Models**: список доступных LLM с настройками (temperature, maxTokens, pricing, webSearch).
+- **Models**: список доступных LLM с настройками (temperature, maxTokens, pricing, webSearch, **fallbackModels**, **fallbackTimeoutMs**, **fallbackMode**, **contextCompression**).
 - **Arena graph**: `nodes` + `edges`.
 - **Configs**: сохранённые пресеты пайплайнов.
 - **Chat**: `messages` + `responses` и `historicalChats`.
 - **Usage**: `globalUsage`, `usageHistory`, `sessionCost`, `maxSessionBudget`.
-- **Knowledge Base**: список путей к файлам для инжекта в промпты.
+- **Knowledge Base**: список путей к файлам + **BM25 RAG индекс** с чанкингом.
 
 ## Arena: пайплайны (DAG)
 
@@ -106,35 +109,29 @@
 
 - `prompt`
   - Производит текстовый вывод через шаблон.
-  - Поддерживает плейсхолдеры:
-    - `{{input}}` / `{{context}}` — контекст от upstream-узлов
-    - `{{global}}` — инжектируемый контент Knowledge Base
-  - Если забудешь `{{input}}`/`{{context}}`, executor автоматически добавит `{{input}}`.
+  - Поддерживает плейсхолдеры: `{{input}}`, `{{context}}`, `{{global}}`.
 
 - `model`
   - Вызывает `/api/chat` для стриминга ответа LLM.
-  - Вход приходит от upstream-узлов (или начального ввода пайплайна).
-  - Подсчитываются токены (prompt vs completion) и оценивается стоимость.
+  - **Context Compression**: автоматическое сжатие длинных контекстов.
+  - **Smart Fallback Chain**: fallback на резервные модели при timeout/error.
 
-- `validator`
-  - Вызывает LLM для валидации/саммари/оценки нескольких upstream-выходов.
-  - Встроенные режимы:
-    - `consensus`
-    - `scoring`
-    - `custom` (использует промпт узла)
+- `validator` — валидация/саммари/оценка upstream-выходов (consensus/scoring/custom).
 
-- `aggregator`
-  - Вызывает LLM для объединения upstream-выходов в единый финальный ответ.
+- `aggregator` — объединение upstream-выходов в единый финальный ответ.
 
-- `search`
-  - Вызывает `/api/search` для получения веб-результатов.
+- `search` — веб-поиск через DuckDuckGo.
 
 - `file`
-  - Читает содержимое файла через `/api/files`.
+  - Чтение файлов, **Smart Read** для больших файлов.
+  - **Global Knowledge**: инжектит файл в контекст всех AI-узлов.
 
-- `router`
-  - Запускает LLM-классификатор и активирует только совпавший исходящий путь.
-  - Несовпавшие downstream-узлы помечаются `skipped`.
+- `router` — LLM-классификатор с активацией одного из исходящих путей.
+
+- `code`
+  - **Создание/редактирование/удаление файлов** через `/api/files/edit`.
+  - Может использовать AI для генерации кода.
+  - Операции: `write`, `edit`, `append`, `delete`.
 
 ### Топология и параллелизм
 
@@ -172,26 +169,67 @@ UI Arena предлагает **Dry Run (Preview Prompts)**.
 
 - `POST /api/chat`
   - Проксирует стриминг OpenRouter Chat Completions.
-  - Поддерживает tool-based веб-поиск (когда включён) через детекцию tool calls и серверный поиск.
+  - **Tools**: web_search, list_files, read_file, write_file, edit_file, delete_file.
+  - **Multi-step tool chains**: рекурсивная обработка цепочек инструментов.
 
-- `GET /api/models`
-  - Получает список моделей OpenRouter и маппит его на тип `Model` приложения.
+- `GET /api/models` — список моделей OpenRouter.
 
-- `GET /api/files`
-  - Возвращает дерево файлов текущей рабочей области (исключая некоторые директории).
+- `GET /api/files` — дерево файлов проекта.
 
-- `POST /api/files`
-  - Читает конкретный файл по относительному пути.
+- `POST /api/files` — чтение конкретного файла.
 
-- `POST /api/search`
-  - Выполняет поиск DuckDuckGo Lite и возвращает отформатированные результаты.
+- `PATCH /api/files/edit` — редактирование файлов (write/edit/append/delete) с бэкапами.
 
-## Аналитика: токены и стоимость
+- `POST /api/search` — веб-поиск DuckDuckGo Lite.
 
-- Подсчёт токенов использует `lib/tokenizer.ts` (`js-tiktoken`) когда возможно.
-- Оценка стоимости:
-  - Предпочитает pricing модели, возвращаемый OpenRouter (`/api/models`), или из настроенного `Model.pricing`.
-  - Фолбэк на эвристику, если pricing отсутствует.
+- `POST /api/knowledge/search` — **BM25 RAG поиск** по индексированным файлам.
+
+- `PUT /api/knowledge/index` — индексация файла для RAG.
+
+- `GET /api/knowledge/stats` — статистика RAG индекса.
+
+## AI File Editing & Tools
+
+ИИ в чате может использовать инструменты:
+
+- `list_files` — список файлов проекта.
+- `read_file` — чтение файла.
+- `write_file` — создание/перезапись файла.
+- `edit_file` — редактирование (str_replace).
+- `delete_file` — удаление файла.
+- `web_search` — веб-поиск.
+
+### Multi-step Tool Chains
+
+ИИ может выполнять цепочки: `list_files → delete_file(file1) → write_file(new)` — всё в одном запросе.
+
+## Smart Fallback Chain
+
+Model узлы поддерживают цепочку fallback:
+
+- `fallbackModels`: резервные модели.
+- `fallbackTimeoutMs`: таймаут перед fallback.
+- `fallbackMode`: `'timeout'` (по времени) или `'on_error'` (только при ошибке).
+
+## Context Compression
+
+Автоматическое сжатие длинных контекстов в model узлах:
+
+- `enabled`: включить.
+- `thresholdTokens`: порог (default: 1000).
+- `targetRatio`: целевое сжатие 0.0-1.0.
+
+## База знаний (RAG)
+
+- **BM25 поиск** по индексированным файлам.
+- **Smart Read**: выборочное чтение для больших файлов.
+- **Global Knowledge**: автоматический инжект в промпты.
+
+## Аналитика и экспорт
+
+- **Waterfall/Gantt**: визуализация выполнения пайплайна.
+- **Экспорт**: PDF и CSV отчёты.
+- **Метрики**: prompt/completion токены, стоимость, latency.
 
 ## Решение проблем
 
@@ -213,9 +251,9 @@ UI Arena предлагает **Dry Run (Preview Prompts)**.
 ## Замечания по безопасности (важно)
 
 - **Никогда не комить `.env`**. Твой ключ OpenRouter должен быть секретом.
-- Эндпоинт `POST /api/files` может читать **любой файл внутри корня проекта**, включая секреты (например `.env`).
-  - Это нормально для локальной разработки, но **небезопасно для публичных деплоев**.
-  - Если деплоишь публично, ограничь `/api/files` (auth + allowlist путей) или удали его.
+- Эндпоинты `/api/files` и `/api/files/edit` могут читать и изменять **любой файл внутри корня проекта**.
+- Это нормально для локальной разработки, но **небезопасно для публичных деплоев**.
+- Для продакшена: добавь auth + allowlist путей.
 
 ## Идеи для развития
 

@@ -137,9 +137,7 @@ export async function POST(req: Request) {
           const reader = responseToRead.body.getReader();
           let buffer = '';
           let isToolCall = false;
-          let toolCallId = '';
-          let toolArgs = '';
-          let toolName = '';
+          let toolCalls: Array<{id: string, name: string, args: string}> = [];
           let streamedContent = '';
           
           while (true) {
@@ -158,10 +156,16 @@ export async function POST(req: Request) {
                   
                   if (delta?.tool_calls) {
                     isToolCall = true;
-                    const tc = delta.tool_calls[0];
-                    if (tc.id) toolCallId = tc.id;
-                    if (tc.function?.name) toolName = tc.function.name;
-                    if (tc.function?.arguments) toolArgs += tc.function.arguments;
+                    // Process ALL tool calls, not just first one
+                    for (const tc of delta.tool_calls) {
+                      const index = tc.index || 0;
+                      if (!toolCalls[index]) {
+                        toolCalls[index] = { id: '', name: '', args: '' };
+                      }
+                      if (tc.id) toolCalls[index].id = tc.id;
+                      if (tc.function?.name) toolCalls[index].name = tc.function.name;
+                      if (tc.function?.arguments) toolCalls[index].args += tc.function.arguments;
+                    }
                   } else if (!isToolCall && delta?.content) {
                     controller.enqueue(encoder.encode(delta.content));
                     streamedContent += delta.content;
@@ -171,7 +175,9 @@ export async function POST(req: Request) {
             }
           }
           
-          if (isToolCall) return { toolCallId, toolArgs, toolName, streamedContent };
+          if (isToolCall && toolCalls.length > 0) {
+            return { toolCalls, streamedContent };
+          }
           return null;
         };
 
@@ -186,112 +192,132 @@ export async function POST(req: Request) {
           
           const toolCallInfo = await processStream(apiRes);
           
-          if (!toolCallInfo || !toolCallInfo.toolArgs) {
+          if (!toolCallInfo || !toolCallInfo.toolCalls || toolCallInfo.toolCalls.length === 0) {
             return true; // Conversation complete
           }
           
-          // Validate JSON before parsing
-          let parsedArgs: any;
-          try {
-            const trimmedArgs = toolCallInfo.toolArgs.trim();
-            console.log('[Tool Debug] Raw args:', trimmedArgs);
-            console.log('[Tool Debug] Tool name:', toolCallInfo.toolName);
-            
-            // Check if looks like complete JSON object
-            if (!trimmedArgs.startsWith('{') || !trimmedArgs.endsWith('}')) {
-              throw new Error(`Incomplete JSON: starts with "${trimmedArgs.slice(0, 10)}...", ends with "...${trimmedArgs.slice(-10)}"`);
-            }
-            parsedArgs = JSON.parse(trimmedArgs);
-          } catch (jsonErr: any) {
-            controller.enqueue(encoder.encode(`\n\n❌ [Invalid tool arguments: ${jsonErr.message}]`));
-            console.error('[Tool Error] Raw args:', toolCallInfo.toolArgs);
-            console.error('[Tool Error] Parse error:', jsonErr);
-            return false;
-          }
+          // Process ALL tool calls in parallel
+          const toolResults: Array<{id: string, name: string, result: string, args: string}> = [];
           
-          const toolName = toolCallInfo.toolName || parsedArgs._toolName || 'unknown';
-          
-          try {
-            let toolResult: string;
-            
-            switch (toolName) {
-              case 'web_search': {
-                controller.enqueue(encoder.encode(`\n\n🔍 \`[Search: ${parsedArgs.query}]\`...\n\n`));
-                let searchResults = await performSearch(parsedArgs.query);
-                toolResult = searchResults.startsWith('[Search') ? 'Search failed' : searchResults;
-                break;
-              }
+          for (const tc of toolCallInfo.toolCalls) {
+            // Validate JSON before parsing
+            let parsedArgs: any;
+            try {
+              const trimmedArgs = tc.args.trim();
+              console.log('[Tool Debug] Raw args:', trimmedArgs);
+              console.log('[Tool Debug] Tool name:', tc.name);
               
-              case 'read_file': {
-                controller.enqueue(encoder.encode(`\n\n📄 \`[Read: ${parsedArgs.filePath}]\`...\n\n`));
-                const fileRes = await fetch(`http://localhost:3000/api/files`, {
-                  method: 'POST', headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ filePath: parsedArgs.filePath })
-                });
-                const fileData = await fileRes.json();
-                toolResult = fileRes.ok ? fileData.content : `Error: ${fileData.error}`;
-                break;
+              // Check if looks like complete JSON object
+              if (!trimmedArgs.startsWith('{') || !trimmedArgs.endsWith('}')) {
+                throw new Error(`Incomplete JSON: starts with "${trimmedArgs.slice(0, 10)}..."`);
               }
-              
-              case 'write_file': {
-                controller.enqueue(encoder.encode(`\n\n✏️ \`[Write: ${parsedArgs.filePath}]\`...\n\n`));
-                const editRes = await fetch(`http://localhost:3000/api/files/edit`, {
-                  method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ filePath: parsedArgs.filePath, operation: 'write', content: parsedArgs.content })
-                });
-                const result = await editRes.json();
-                toolResult = result.success ? `Wrote ${result.bytesWritten} bytes` : `Error: ${result.error}`;
-                break;
-              }
-              
-              case 'edit_file': {
-                controller.enqueue(encoder.encode(`\n\n✏️ \`[Edit: ${parsedArgs.filePath}]\`...\n\n`));
-                const editRes = await fetch(`http://localhost:3000/api/files/edit`, {
-                  method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ filePath: parsedArgs.filePath, operation: 'edit', oldStr: parsedArgs.oldStr, newStr: parsedArgs.newStr })
-                });
-                const result = await editRes.json();
-                toolResult = result.success ? 'Edited successfully' : `Error: ${result.error}`;
-                break;
-              }
-              
-              case 'delete_file': {
-                controller.enqueue(encoder.encode(`\n\n🗑️ \`[Delete: ${parsedArgs.filePath}]\`...\n\n`));
-                const editRes = await fetch(`http://localhost:3000/api/files/edit`, {
-                  method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ filePath: parsedArgs.filePath, operation: 'delete' })
-                });
-                const result = await editRes.json();
-                toolResult = result.success ? 'Deleted successfully' : `Error: ${result.error}`;
-                break;
-              }
-              
-              case 'list_files': {
-                controller.enqueue(encoder.encode(`\n\n📁 \`[List files]\`...\n\n`));
-                const filesRes = await fetch(`http://localhost:3000/api/files`);
-                const filesData = await filesRes.json();
-                toolResult = filesRes.ok ? filesData.files.map((f: any) => f.path).join('\n') : 'Failed to list files';
-                break;
-              }
-              
-              default: {
-                toolResult = `Unknown tool: ${toolName}`;
-              }
+              parsedArgs = JSON.parse(trimmedArgs);
+            } catch (jsonErr: any) {
+              controller.enqueue(encoder.encode(`\n\n❌ [Invalid tool arguments for ${tc.name}: ${jsonErr.message}]`));
+              console.error('[Tool Error] Raw args:', tc.args);
+              continue; // Skip this tool call
             }
             
-            const updatedMessages = [
-              ...currentMessages,
-              { role: 'assistant', content: null, tool_calls: [{ id: toolCallInfo.toolCallId, type: 'function', function: { name: toolName, arguments: toolCallInfo.toolArgs } }] },
-              { role: 'tool', tool_call_id: toolCallInfo.toolCallId, name: toolName, content: toolResult }
-            ];
+            const toolName = tc.name || parsedArgs._toolName || 'unknown';
             
-            // Continue chain - ИИ может захотеть сделать ещё один tool call
-            return await handleToolChain(updatedMessages);
-            
-          } catch (e: any) {
-            controller.enqueue(encoder.encode(`\n\n❌ [Error: ${e.message}]`));
-            return false;
+            try {
+              let toolResult: string;
+              
+              switch (toolName) {
+                case 'web_search': {
+                  controller.enqueue(encoder.encode(`\n\n🔍 \`[Search: ${parsedArgs.query}]\`...\n\n`));
+                  let searchResults = await performSearch(parsedArgs.query);
+                  toolResult = searchResults.startsWith('[Search') ? 'Search failed' : searchResults;
+                  break;
+                }
+                
+                case 'read_file': {
+                  controller.enqueue(encoder.encode(`\n\n📄 \`[Read: ${parsedArgs.filePath}]\`...\n\n`));
+                  const fileRes = await fetch(`http://localhost:3000/api/files`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ filePath: parsedArgs.filePath })
+                  });
+                  const fileData = await fileRes.json();
+                  toolResult = fileRes.ok ? fileData.content : `Error: ${fileData.error}`;
+                  break;
+                }
+                
+                case 'write_file': {
+                  controller.enqueue(encoder.encode(`\n\n✏️ \`[Write: ${parsedArgs.filePath}]\`...\n\n`));
+                  const editRes = await fetch(`http://localhost:3000/api/files/edit`, {
+                    method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ filePath: parsedArgs.filePath, operation: 'write', content: parsedArgs.content })
+                  });
+                  const result = await editRes.json();
+                  toolResult = result.success ? `Wrote ${result.bytesWritten} bytes` : `Error: ${result.error}`;
+                  break;
+                }
+                
+                case 'edit_file': {
+                  controller.enqueue(encoder.encode(`\n\n✏️ \`[Edit: ${parsedArgs.filePath}]\`...\n\n`));
+                  const editRes = await fetch(`http://localhost:3000/api/files/edit`, {
+                    method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ filePath: parsedArgs.filePath, operation: 'edit', oldStr: parsedArgs.oldStr, newStr: parsedArgs.newStr })
+                  });
+                  const result = await editRes.json();
+                  toolResult = result.success ? 'Edited successfully' : `Error: ${result.error}`;
+                  break;
+                }
+                
+                case 'delete_file': {
+                  controller.enqueue(encoder.encode(`\n\n🗑️ \`[Delete: ${parsedArgs.filePath}]\`...\n\n`));
+                  const editRes = await fetch(`http://localhost:3000/api/files/edit`, {
+                    method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ filePath: parsedArgs.filePath, operation: 'delete' })
+                  });
+                  const result = await editRes.json();
+                  toolResult = result.success ? 'Deleted successfully' : `Error: ${result.error}`;
+                  break;
+                }
+                
+                case 'list_files': {
+                  controller.enqueue(encoder.encode(`\n\n📁 \`[List files]\`...\n\n`));
+                  const filesRes = await fetch(`http://localhost:3000/api/files`);
+                  const filesData = await filesRes.json();
+                  toolResult = filesRes.ok ? filesData.files.map((f: any) => f.path).join('\n') : 'Failed to list files';
+                  break;
+                }
+                
+                default: {
+                  toolResult = `Unknown tool: ${toolName}`;
+                }
+              }
+              
+              toolResults.push({ id: tc.id, name: toolName, result: toolResult, args: tc.args });
+              
+            } catch (e: any) {
+              controller.enqueue(encoder.encode(`\n\n❌ [Error executing ${toolName}: ${e.message}]`));
+              toolResults.push({ id: tc.id, name: toolName, result: `Error: ${e.message}`, args: tc.args });
+            }
           }
+          
+          // Build messages with ALL tool results
+          const updatedMessages = [
+            ...currentMessages,
+            { 
+              role: 'assistant', 
+              content: null, 
+              tool_calls: toolResults.map(tr => ({ 
+                id: tr.id, 
+                type: 'function', 
+                function: { name: tr.name, arguments: tr.args } 
+              })) 
+            },
+            ...toolResults.map(tr => ({ 
+              role: 'tool', 
+              tool_call_id: tr.id, 
+              name: tr.name, 
+              content: tr.result 
+            }))
+          ];
+          
+          // Continue chain - ИИ может захотеть сделать ещё tool calls
+          return await handleToolChain(updatedMessages);
         };
 
         await handleToolChain(messages);

@@ -7,7 +7,7 @@ const _geist = Geist({ subsets: ["latin"] });
 const _geistMono = Geist_Mono({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: 'LLM Arena - Multi-Model Orchestration',
+  title: 'Ἥφαιστος - LLM Arena',
   description: 'Orchestrate multiple AI models to work together on tasks with hierarchical verification',
   generator: 'v0.app',
   icons: {
