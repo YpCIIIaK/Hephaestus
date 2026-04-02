@@ -564,6 +564,8 @@ export async function executePipeline(
 
       onNodeUpdate(nodeId, 'running')
       console.log(`[PIPELINE] Starting Node: ${node.data.label} (${node.type})`, { id: nodeId })
+      
+      const nodeStartTime = Date.now() // Record start time outside nodeWork for catch block access
 
       const nodeWork = async () => {
         // Stagger parallel nodes to avoid instant rate limits
@@ -574,7 +576,6 @@ export async function executePipeline(
         if (signal?.aborted) throw new Error('Aborted')
         const nodeWorkStart = Date.now()
         let result = ''
-        let nodeStartTime = Date.now() // Record actual start time for Gantt
 
         const incomingEdges = edges.filter(e => e.target === nodeId)
         const inputs = incomingEdges.map(e => nodeResults[e.source] || '')
@@ -1206,7 +1207,8 @@ export async function executePipeline(
 
             if (options.isDryRun) {
               result = `--- DRY RUN (File ${operation}) ---\n\nTarget: ${filePath}\n\n${fileContent.substring(0, 500)}${fileContent.length > 500 ? '...' : ''}`
-              onNodeUpdate(nodeId, 'completed', result, 0)
+              const dryRunEndTime = Date.now()
+              onNodeUpdate(nodeId, 'completed', result, 0, dryRunEndTime - nodeWorkStart, undefined, undefined, undefined, undefined, nodeStartTime, dryRunEndTime)
               nodeResults[nodeId] = result
               return { nodeId }
             }
@@ -1272,7 +1274,8 @@ export async function executePipeline(
           console.error(`Error/timeout in node ${nodeId}:`, err)
           const msg = err.message || 'Error occurred'
           nodeResults[nodeId] = `[Error] ${msg}`
-          onNodeUpdate(nodeId, 'error', `[Error] ${msg}`)
+          const errorEndTime = Date.now()
+          onNodeUpdate(nodeId, 'error', `[Error] ${msg}`, 0, errorEndTime - nodeStartTime, undefined, undefined, undefined, undefined, nodeStartTime, errorEndTime)
         })
     })
 
@@ -1290,7 +1293,7 @@ export async function executePipeline(
         // Unmatched edges are effectively dead (inDegree never reaches 0, so they don't execute)
         if (activeEdges !== undefined && !activeEdges.includes(dep)) {
            // Skip this dependent visually
-           onNodeUpdate(dep, 'skipped')
+           onNodeUpdate(dep, 'skipped', undefined, 0, 0, undefined, undefined, undefined, undefined, Date.now(), Date.now())
            // We do NOT decrement its inDegree to 0 or push it to nextNodes!
            // Anyone downstream from this skipped node will also stall cleanly.
            continue

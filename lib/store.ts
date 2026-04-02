@@ -79,6 +79,10 @@ interface ArenaStore {
   enqueueMessage: (content: string) => void
   dequeueMessage: () => string | null
 
+  // Chat Input Draft
+  chatInput: string
+  setChatInput: (input: string) => void
+
   // Knowledge Base
   knowledgeBase: string[]
   addKnowledgeFile: (path: string) => void
@@ -496,6 +500,10 @@ export const useArenaStore = create<ArenaStore>()(
     set({ messageQueue: rest });
     return next;
   },
+
+  // Chat Input Draft
+  chatInput: '',
+  setChatInput: (input) => set({ chatInput: input }),
 
   globalUsage: {
     totalTokens: 0,

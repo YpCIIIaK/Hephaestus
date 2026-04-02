@@ -103,6 +103,8 @@ export function ChatPanel() {
   const deleteHistoricalChat = useArenaStore(state => state.deleteHistoricalChat)
   
   const activeConfigId = useArenaStore(state => state.activeConfigId)
+  const chatInput = useArenaStore(state => state.chatInput)
+  const setChatInput = useArenaStore(state => state.setChatInput)
   const abortGeneration = useArenaStore(state => state.abortGeneration)
   const setAbortController = useArenaStore(state => state.setAbortController)
   const messageQueue = useArenaStore(state => state.messageQueue)
@@ -118,7 +120,6 @@ export function ChatPanel() {
     error?: string
   }
 
-  const [input, setInput] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const [copiedId, setCopiedId] = useState<string | null>(null)
   const [attachedFiles, setAttachedFiles] = useState<AttachedFile[]>([])
@@ -207,7 +208,7 @@ export function ChatPanel() {
   }
 
   const handleSubmit = async (overrideInput?: string) => {
-    const textToSubmit = overrideInput || input
+    const textToSubmit = overrideInput || chatInput
     
     // Build context from attached files
     const filesContext = attachedFiles
@@ -223,7 +224,7 @@ export function ChatPanel() {
 
     if (isLoading) {
       enqueueMessage(fullInput)
-      setInput('')
+      setChatInput('')
       setAttachedFiles([])
       return
     }
@@ -238,7 +239,7 @@ export function ChatPanel() {
     const msgId = userMessage.id
     
     addMessage(userMessage)
-    if (!overrideInput) setInput('')
+    if (!overrideInput) setChatInput('')
     setAttachedFiles([])
     setIsLoading(true)
 
@@ -606,7 +607,7 @@ export function ChatPanel() {
                   key={suggestion}
                   variant="outline"
                   size="sm"
-                  onClick={() => setInput(suggestion)}
+                  onClick={() => setChatInput(suggestion)}
                   className="text-xs"
                 >
                   {suggestion}
@@ -728,8 +729,8 @@ export function ChatPanel() {
           <div className="relative">
             <Textarea
               ref={textareaRef}
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
+              value={chatInput}
+              onChange={(e) => setChatInput(e.target.value)}
               onKeyDown={handleKeyDown}
               placeholder={attachedFiles.length > 0 ? "Add a message (optional)..." : "Send a message to all models..."}
               className="min-h-[80px] pr-24 pl-12 resize-none bg-secondary border-0 focus-visible:ring-1 focus-visible:ring-primary"
@@ -766,7 +767,7 @@ export function ChatPanel() {
           </div>
           <div className="absolute bottom-3 right-3 flex items-center gap-2">
             <span className="text-xs text-muted-foreground mr-1">
-              {input.length} / 4000
+              {chatInput.length} / 4000
             </span>
             {isLoading ? (
               <Button 
@@ -781,7 +782,7 @@ export function ChatPanel() {
             ) : (
               <Button 
                 onClick={() => handleSubmit()} 
-                disabled={!input.trim()}
+                disabled={!chatInput.trim()}
                 size="sm"
                 className="gap-2"
               >

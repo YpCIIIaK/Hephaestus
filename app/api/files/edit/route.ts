@@ -133,12 +133,7 @@ export async function PATCH(req: NextRequest) {
           return NextResponse.json({ error: 'File does not exist' }, { status: 404 })
         }
 
-        // Create backup before delete
-        if (createBackup) {
-          const backupPath = `${fullPath}.backup.${Date.now()}.deleted`
-          await fs.copyFile(fullPath, backupPath)
-        }
-
+        // No backup needed - Git is used for version control
         await fs.unlink(fullPath)
 
         return NextResponse.json({ 
