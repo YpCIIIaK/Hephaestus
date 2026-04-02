@@ -534,6 +534,7 @@ export const useArenaStore = create<ArenaStore>()(
         chatMode: state.chatMode,
         maxSessionBudget: state.maxSessionBudget,
         knowledgeBase: state.knowledgeBase
+        // Note: chatInput is NOT persisted - it survives tab switching (in memory) but clears on page reload
       }),
       // After rehydration, mark any interrupted (streaming/pending) responses as error
       onRehydrateStorage: () => (state) => {

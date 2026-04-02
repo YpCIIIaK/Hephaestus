@@ -26,6 +26,7 @@ import { useMemo } from 'react'
 import { WaterfallGantt } from '@/components/waterfall-gantt'
 import { Button } from '@/components/ui/button'
 import { downloadCSV, downloadPDF } from '@/lib/export-utils'
+import { Badge } from '@/components/ui/badge'
 
 const COLORS = ['#ffffff', '#e2e8f0', '#94a3b8', '#64748b', '#475569', '#334155', '#1e293b', '#0f172a']
 
@@ -858,21 +859,7 @@ export function AnalyticsPanel() {
 
             {/* WATERFALL TAB */}
             <TabsContent value="waterfall" className="space-y-6">
-              <WaterfallGantt 
-                pipelineSteps={responses.find(r => r.status === 'complete' && r.pipelineSteps && r.pipelineSteps.length > 0)?.pipelineSteps}
-              />
-              
-              {/* Historical Waterfalls */}
-              {historicalChats
-                .filter(chat => chat.responses.some(r => r.pipelineSteps && r.pipelineSteps.some(s => typeof s.startTime === 'number')))
-                .slice(0, 3)
-                .map(chat => (
-                  <WaterfallGantt 
-                    key={chat.id}
-                    pipelineSteps={chat.responses.find(r => r.pipelineSteps)?.pipelineSteps}
-                    className="mt-6"
-                  />
-                ))}
+              <WaterfallHistory responses={responses} historicalChats={historicalChats} />
             </TabsContent>
           </Tabs>
       </div>
@@ -892,5 +879,221 @@ function MetricCard({ title, value, sub, icon: Icon, color }: any) {
         <p className="text-xs text-muted-foreground mt-1">{sub}</p>
       </CardContent>
     </Card>
+  )
+}
+
+import { useState, useEffect } from 'react'
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
+import { ChevronDown, ChevronRight, History, MessageSquare } from 'lucide-react'
+import { ModelResponse, HistoricalChat, ChatMessage } from '@/lib/types'
+
+interface WaterfallHistoryProps {
+  responses: ModelResponse[]
+  historicalChats: HistoricalChat[]
+}
+
+interface PipelineGroup {
+  date: string
+  dateLabel: string
+  pipelines: {
+    response: ModelResponse
+    messageContent: string
+    messageTimestamp: string
+  }[]
+}
+
+function WaterfallHistory({ responses, historicalChats }: WaterfallHistoryProps) {
+  const [expandedDates, setExpandedDates] = useState<Set<string>>(new Set())
+  
+  // Collect all completed pipeline responses with valid steps
+  const allPipelines = useMemo(() => {
+    const seenIds = new Set<string>()
+    const result: { response: ModelResponse; chat?: HistoricalChat; message?: ChatMessage }[] = []
+    
+    // Helper to add unique responses
+    const addUnique = (r: ModelResponse, chat?: HistoricalChat, message?: ChatMessage) => {
+      if (seenIds.has(r.id)) return
+      seenIds.add(r.id)
+      result.push({ response: r, chat, message })
+    }
+    
+    // Current chat pipelines
+    responses
+      .filter(r => r.status === 'complete' && r.pipelineSteps && r.pipelineSteps.length > 0)
+      .forEach(r => addUnique(r))
+    
+    // Historical chat pipelines
+    historicalChats.forEach(chat => {
+      chat.responses
+        .filter(r => r.status === 'complete' && r.pipelineSteps && r.pipelineSteps.length > 0)
+        .forEach(r => {
+          const message = chat.messages.find(m => m.id === r.messageId)
+          addUnique(r, chat, message)
+        })
+    })
+    
+    // Sort by most recent first (using first step startTime or latency as fallback)
+    return result.sort((a, b) => {
+      const aTime = a.response.pipelineSteps?.[0]?.startTime || a.response.latency || 0
+      const bTime = b.response.pipelineSteps?.[0]?.startTime || b.response.latency || 0
+      return bTime - aTime
+    })
+  }, [responses, historicalChats])
+
+  // Group by date
+  const groupedByDate = useMemo(() => {
+    const groups: Record<string, PipelineGroup> = {}
+    
+    allPipelines.forEach(({ response, chat, message }) => {
+      const timestamp = message?.timestamp || chat?.date || new Date().toISOString()
+      const date = new Date(timestamp)
+      const dateKey = date.toISOString().split('T')[0]
+      const dateLabel = date.toLocaleDateString('ru-RU', { 
+        day: 'numeric', 
+        month: 'long', 
+        year: 'numeric' 
+      })
+      
+      if (!groups[dateKey]) {
+        groups[dateKey] = { date: dateKey, dateLabel, pipelines: [] }
+      }
+      
+      groups[dateKey].pipelines.push({
+        response,
+        messageContent: message?.content || 'Unknown query',
+        messageTimestamp: timestamp
+      })
+    })
+    
+    return Object.values(groups).sort((a, b) => b.date.localeCompare(a.date))
+  }, [allPipelines])
+
+  // Auto-expand first date on initial load
+  useEffect(() => {
+    if (groupedByDate.length > 0 && expandedDates.size === 0) {
+      setExpandedDates(new Set([groupedByDate[0].date]))
+    }
+  }, [groupedByDate])
+
+  const toggleDate = (date: string) => {
+    setExpandedDates(prev => {
+      const next = new Set(prev)
+      if (next.has(date)) {
+        next.delete(date)
+      } else {
+        next.add(date)
+      }
+      return next
+    })
+  }
+
+  if (groupedByDate.length === 0) {
+    return (
+      <Card className="border-border/50 bg-card/50">
+        <CardHeader>
+          <CardTitle className="text-lg flex items-center gap-2">
+            <Clock className="h-5 w-5 text-blue-400" /> Pipeline Execution History
+          </CardTitle>
+          <CardDescription>All completed pipeline waterfalls grouped by date</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
+            <History className="w-12 h-12 mb-4 opacity-20" />
+            <p className="text-sm">No pipeline execution history yet</p>
+            <p className="text-xs mt-1">Run pipelines in Chat mode to see waterfalls here</p>
+          </div>
+        </CardContent>
+      </Card>
+    )
+  }
+
+  return (
+    <div className="space-y-4">
+      {groupedByDate.map((group) => {
+        const isExpanded = expandedDates.has(group.date)
+        return (
+          <Card key={group.date} className="border-border/50 bg-card/50 overflow-hidden">
+            <Collapsible open={isExpanded} onOpenChange={() => toggleDate(group.date)}>
+              <CollapsibleTrigger asChild>
+                <div className="flex items-center justify-between p-4 cursor-pointer hover:bg-secondary/30 transition-colors">
+                  <div className="flex items-center gap-3">
+                    <Button 
+                      variant="ghost" 
+                      size="icon" 
+                      className="h-6 w-6 shrink-0"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        toggleDate(group.date)
+                      }}
+                    >
+                      {isExpanded ? (
+                        <ChevronDown className="w-4 h-4" />
+                      ) : (
+                        <ChevronRight className="w-4 h-4" />
+                      )}
+                    </Button>
+                    <div className="flex items-center gap-2">
+                      <Calendar className="w-4 h-4 text-muted-foreground" />
+                      <h3 className="text-sm font-semibold text-foreground">{group.dateLabel}</h3>
+                    </div>
+                    <Badge variant="outline" className="text-xs">
+                      {group.pipelines.length} pipeline{group.pipelines.length > 1 ? 's' : ''}
+                    </Badge>
+                  </div>
+                </div>
+              </CollapsibleTrigger>
+              
+              <CollapsibleContent>
+                <CardContent className="pt-0">
+                  <div className="space-y-4 pl-10 border-l-2 border-border/50 ml-3">
+                    {group.pipelines.map(({ response, messageContent, messageTimestamp }, idx) => (
+                      <Collapsible key={`${group.date}-${response.id}`} defaultOpen={idx === 0}>
+                        <Card className="border-border/50 bg-card/50 overflow-hidden">
+                          <CollapsibleTrigger asChild>
+                            <div className="flex items-center justify-between p-4 cursor-pointer hover:bg-secondary/30 transition-colors">
+                              <div className="flex items-center gap-3">
+                                <Button variant="ghost" size="icon" className="h-6 w-6 shrink-0">
+                                  <ChevronDown className="w-4 h-4 transition-transform duration-200 data-[state=closed]:rotate-[-90deg]" />
+                                </Button>
+                                <div>
+                                  <div className="flex items-center gap-2">
+                                    <MessageSquare className="w-3.5 h-3.5 text-muted-foreground" />
+                                    <span className="text-sm font-medium line-clamp-1">
+                                      {messageContent.slice(0, 80)}{messageContent.length > 80 ? '...' : ''}
+                                    </span>
+                                  </div>
+                                  <div className="flex items-center gap-3 text-xs text-muted-foreground mt-1">
+                                    <span>{response.modelName}</span>
+                                    <span>•</span>
+                                    <span>{new Date(messageTimestamp).toLocaleTimeString('ru-RU')}</span>
+                                    <span>•</span>
+                                    <span>{response.pipelineSteps?.length || 0} nodes</span>
+                                    {response.latency && (
+                                      <>
+                                        <span>•</span>
+                                        <span>{(response.latency / 1000).toFixed(2)}s</span>
+                                      </>
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          </CollapsibleTrigger>
+                          <CollapsibleContent>
+                            <CardContent className="pt-0">
+                              <WaterfallGantt pipelineSteps={response.pipelineSteps} />
+                            </CardContent>
+                          </CollapsibleContent>
+                        </Card>
+                      </Collapsible>
+                    ))}
+                  </div>
+                </CardContent>
+              </CollapsibleContent>
+            </Collapsible>
+          </Card>
+        )
+      })}
+    </div>
   )
 }

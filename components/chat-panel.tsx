@@ -342,8 +342,9 @@ export function ChatPanel() {
                 completionTokens,
                 promptCost,
                 completionCost,
-                startTime,
-                endTime,
+                // Preserve existing times if new ones are undefined (e.g., during streaming 'running' updates)
+                startTime: startTime ?? s.startTime,
+                endTime: endTime ?? s.endTime,
               }
             : s
         )
@@ -370,11 +371,15 @@ export function ChatPanel() {
         return acc + Math.ceil((text?.length || 0) / 3.5)
       }, 0)
       
+      // Get final steps from store to ensure Waterfall has complete data with timestamps
+      const finalResp = useArenaStore.getState().responses.find(r => r.id === runId)
+      
       useArenaStore.getState().updateResponse(runId, {
         status: 'complete',
         content: finalResult,
         tokens: totalTokens,
-        latency: Date.now() - startTime
+        latency: Date.now() - startTime,
+        pipelineSteps: finalResp?.pipelineSteps
       })
     } catch (err: any) {
       useArenaStore.getState().updateResponse(runId, {
