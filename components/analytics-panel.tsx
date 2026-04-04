@@ -47,7 +47,7 @@ const CustomTooltip = ({ active, payload, label }: any) => {
 };
 
 export function AnalyticsPanel() {
-  const { responses, historicalChats, globalUsage, usageHistory } = useArenaStore()
+  const { responses, historicalChats, globalUsage, usageHistory, messages } = useArenaStore()
 
   // 1. Process Global Stats (Prioritize usageHistory for accuracy)
   const stats = useMemo(() => {
@@ -859,7 +859,7 @@ export function AnalyticsPanel() {
 
             {/* WATERFALL TAB */}
             <TabsContent value="waterfall" className="space-y-6">
-              <WaterfallHistory responses={responses} historicalChats={historicalChats} />
+              <WaterfallHistory responses={responses} historicalChats={historicalChats} messages={messages} />
             </TabsContent>
           </Tabs>
       </div>
@@ -890,6 +890,7 @@ import { ModelResponse, HistoricalChat, ChatMessage } from '@/lib/types'
 interface WaterfallHistoryProps {
   responses: ModelResponse[]
   historicalChats: HistoricalChat[]
+  messages?: ChatMessage[] // Add current chat messages
 }
 
 interface PipelineGroup {
@@ -902,7 +903,7 @@ interface PipelineGroup {
   }[]
 }
 
-function WaterfallHistory({ responses, historicalChats }: WaterfallHistoryProps) {
+function WaterfallHistory({ responses, historicalChats, messages = [] }: WaterfallHistoryProps) {
   const [expandedDates, setExpandedDates] = useState<Set<string>>(new Set())
   
   // Collect all completed pipeline responses with valid steps
@@ -917,10 +918,13 @@ function WaterfallHistory({ responses, historicalChats }: WaterfallHistoryProps)
       result.push({ response: r, chat, message })
     }
     
-    // Current chat pipelines
+    // Current chat pipelines - look up message from current messages
     responses
       .filter(r => r.status === 'complete' && r.pipelineSteps && r.pipelineSteps.length > 0)
-      .forEach(r => addUnique(r))
+      .forEach(r => {
+        const message = messages.find(m => m.id === r.messageId)
+        addUnique(r, undefined, message)
+      })
     
     // Historical chat pipelines
     historicalChats.forEach(chat => {

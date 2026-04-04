@@ -4,6 +4,9 @@ import { Sidebar } from '@/components/sidebar'
 import { ChatPanel } from '@/components/chat-panel'
 import { ArenaPanel } from '@/components/arena-panel'
 import { AnalyticsPanel } from '@/components/analytics-panel'
+import { TelegramPanel } from '@/components/telegram-panel'
+import { EventSimulator } from '@/components/event-simulator'
+import { IDEChatPanel } from '@/components/ide-chat-panel'
 import { useArenaStore } from '@/lib/store'
 import { Menu, Sparkles } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -52,8 +55,11 @@ export default function Home() {
       {/* Main Content */}
       <main className="flex-1 flex flex-col min-w-0 overflow-hidden pt-14 lg:pt-0">
         {activeTab === 'chat' && <ChatPanel />}
+        {activeTab === 'ide' && <IDEChatPanel />}
         {activeTab === 'arena' && <ArenaPanel />}
         {activeTab === 'dashboard' && <AnalyticsPanel />}
+        {activeTab === 'telegram' && <TelegramPanel />}
+        {activeTab === 'events' && <EventSimulator />}
       </main>
     </div>
   )

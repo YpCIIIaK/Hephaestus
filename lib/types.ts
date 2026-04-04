@@ -7,16 +7,11 @@ export interface PipelineStep {
   status: NodeStatus
   result?: string
   tokens?: number
-  // Measured duration for the node execution (ms). Helps compute tokens/sec.
   latencyMs?: number
-  // Absolute timestamps for Gantt/waterfall visualization
   startTime?: number
   endTime?: number
-  // Model metadata for AI steps (model/validator/aggregator/router nodes).
   modelId?: string
   modelName?: string
-  // Token/cost efficiency split for AI steps.
-  // Note: "tokens" remains the completion/generation tokens to keep existing UI behaviour.
   promptTokens?: number
   completionTokens?: number
   promptCost?: number
@@ -39,54 +34,64 @@ export interface Model {
     completion: number
     request: number
   }
-  // Smart Fallback Chain - models to try if primary fails/times out
   fallbackModels?: string[]
-  fallbackMode?: 'timeout' | 'on_error'  // When to trigger fallback
-  fallbackTimeoutMs?: number  // Timeout before switching to fallback (default: 5000ms, only for timeout mode)
-}
-
-export interface UsageEvent {
-  id: string
-  timestamp: string
-  modelId: string
-  modelName: string
-  tokens: number
-  cost: number
-  type: 'chat' | 'pipeline' | 'error'
+  fallbackMode?: 'timeout' | 'on_error'
+  fallbackTimeoutMs?: number
 }
 
 export interface ArenaNode {
   id: string
-  type: 'model' | 'prompt' | 'validator' | 'aggregator' | 'search' | 'file' | 'router' | 'code'
-  position: { x: number; y: number }
+  type: 'prompt' | 'model' | 'validator' | 'aggregator' | 'search' | 'file' | 'router' | 'code' | 'classifier' | 'analyst' | 'researcher' | 'synthesizer' | 'summarizer'
+  label: string
   data: {
-    label: string
-    model?: Model
     prompt?: string
-    validationType?: 'consensus' | 'scoring' | 'custom'
-    searchQuery?: string
-    maxResults?: number
+    model?: Model
     filePath?: string
     isGlobal?: boolean
-    // Smart File Reader mode (IDE-like selective reading)
+    result?: string
+    status?: NodeStatus
+    maxTokens?: number
+    temperature?: number
+    systemPrompt?: string
+    agentPresetId?: string
+    agentRole?: string
+    agentDomain?: string
+    jsonMode?: boolean
+    jsonSchema?: string
+    contextCompression?: {
+      enabled: boolean
+      thresholdTokens: number
+      targetRatio?: number
+      modelId?: string
+    }
+    fallbackModels?: string[]
+    fallbackMode?: 'timeout' | 'on_error'
+    fallbackTimeoutMs?: number
+    searchQuery?: string
+    codeAction?: 'write' | 'edit' | 'append' | 'delete'
+    codePath?: string
+    codeContent?: string
+    // File node extra props
     isSmartRead?: boolean
     smartQuery?: string
     maxLines?: number
-    // Context Compression (auto-compress long contexts)
-    contextCompression?: {
-      enabled: boolean
-      thresholdTokens?: number  // Сжимать если контекст больше (default: 1000)
-      targetRatio?: number      // Целевое сжатие (default: 0.5 = 50%)
-      modelId?: string          // Модель для сжатия (default: cheap free model)
-    }
+    // Search node extra props
+    maxResults?: number
+    searchSources?: ('duckduckgo' | 'searxng' | 'google' | 'bing' | 'rss')[]
+    scrapeContent?: boolean
+    searchLanguage?: string
+    rssFeeds?: string[]
+    // Router node extra props
     routingPrompt?: string
     routingMap?: Record<string, string>
-    // Code/Editor node properties
-    codeOperation?: 'write' | 'edit' | 'append' | 'delete'
+    // Validator node extra props
+    validationType?: string
+    // Code node extra props
+    codeOperation?: string
     targetFilePath?: string
     useAI?: boolean
-    status?: NodeStatus
-    result?: string
+    // Label stored in data for quick access
+    label?: string
   }
 }
 
@@ -138,4 +143,52 @@ export interface HistoricalChat {
   messages: ChatMessage[]
   responses: ModelResponse[]
   date: string
+}
+
+export interface UsageEvent {
+  id: string
+  timestamp: string
+  modelId: string
+  modelName: string
+  tokens: number
+  cost: number
+  type: 'chat' | 'pipeline' | 'error'
+}
+
+// Telegram Bot Types
+export interface TelegramUser {
+  id: number
+  username?: string
+  firstName?: string
+  lastName?: string
+  firstSeen: string
+  lastActive: string
+  messageCount: number
+  photoCount: number
+  documentCount: number
+  voiceCount: number
+}
+
+export interface TelegramMessage {
+  id: string
+  userId: number
+  type: 'text' | 'photo' | 'document' | 'voice' | 'command'
+  content: string
+  timestamp: string
+  responseTime?: number
+  responseTokens?: number
+  status: 'success' | 'error' | 'pending'
+}
+
+export interface TelegramStats {
+  totalUsers: number
+  activeUsers24h: number
+  totalMessages: number
+  messagesByType: { text: number; photo: number; document: number; voice: number; command: number }
+  avgResponseTime: number
+  totalTokens: number
+  totalCost: number
+  topCommands: Array<{ command: string; count: number }>
+  messagesPerHour: Array<{ hour: number; count: number }>
+  errors24h: number
 }

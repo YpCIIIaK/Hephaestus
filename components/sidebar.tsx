@@ -8,17 +8,21 @@ import {
   Settings, 
   Zap,
   ChevronLeft,
+  ChevronDown,
   ChevronRight,
   Sparkles,
   BarChart3,
   Coins,
   RotateCcw,
   ShieldCheck,
-  AlertTriangle
+  AlertTriangle,
+  Send,
+  Globe,
+  Code
 } from 'lucide-react'
 import { Progress } from '@/components/ui/progress'
 import { Input } from '@/components/ui/input'
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { Button } from '@/components/ui/button'
 import {
   Tooltip,
@@ -35,12 +39,18 @@ export function Sidebar({ isMobile }: { isMobile?: boolean }) {
   
   const [collapsed, setCollapsed] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [budgetCollapsed, setBudgetCollapsed] = useState(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('budgetCollapsed') === 'true'
+    }
+    return false
+  })
   
   const { sessionCost, maxSessionBudget, setMaxSessionBudget, resetSessionCost } = useArenaStore()
   const budgetPercentage = Math.min((sessionCost / maxSessionBudget) * 100, 100)
   const isBudgetCritical = sessionCost >= maxSessionBudget * 0.9
 
-  const handleNav = (tab: 'chat' | 'arena' | 'dashboard') => {
+  const handleNav = (tab: 'chat' | 'arena' | 'dashboard' | 'telegram' | 'events' | 'ide') => {
     setActiveTab(tab)
     if (isMobile) {
       setSidebarOpen(false)
@@ -49,8 +59,11 @@ export function Sidebar({ isMobile }: { isMobile?: boolean }) {
 
   const navItems = [
     { id: 'chat' as const, label: 'Chat', icon: MessageSquare, description: 'Multi-model chat' },
+    { id: 'ide' as const, label: 'IDE', icon: Code, description: 'Chat with file explorer' },
     { id: 'arena' as const, label: 'Arena', icon: Swords, description: 'Model orchestration' },
+    { id: 'events' as const, label: 'Events', icon: Globe, description: 'Event simulation' },
     { id: 'dashboard' as const, label: 'Analytics', icon: BarChart3, description: 'Usage & cost' },
+    { id: 'telegram' as const, label: 'Telegram', icon: Send, description: 'Bot management' },
   ]
 
   return (
@@ -125,43 +138,56 @@ export function Sidebar({ isMobile }: { isMobile?: boolean }) {
 
         {/* Budget Monitor */}
         {!collapsed && (
-          <div className="mx-3 mb-4 p-4 rounded-xl bg-primary/5 border border-primary/10 space-y-3 font-sans">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <ShieldCheck className={cn("w-4 h-4", isBudgetCritical ? "text-amber-500" : "text-emerald-500")} />
-                <span className="text-[10px] font-bold uppercase tracking-[0.05em] text-muted-foreground/80">Session Budget</span>
-              </div>
+          <div className="mx-3 mb-4 space-y-2">
+            <div className="flex items-center justify-between px-1">
               <button 
-                onClick={resetSessionCost}
-                className="p-1 hover:bg-primary/10 rounded transition-colors group"
-                title="Reset session cost"
+                onClick={() => {
+                  const newVal = !budgetCollapsed
+                  setBudgetCollapsed(newVal)
+                  localStorage.setItem('budgetCollapsed', String(newVal))
+                }}
+                className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-[0.05em] text-muted-foreground/80 hover:text-muted-foreground transition-colors"
               >
-                <RotateCcw className="w-3 h-3 text-muted-foreground group-hover:rotate-[20deg] transition-transform" />
+                <ChevronDown className={cn("w-3 h-3 transition-transform", budgetCollapsed && "-rotate-90")} />
+                Session Budget
               </button>
+              {!budgetCollapsed && (
+                <button 
+                  onClick={resetSessionCost}
+                  className="p-1 hover:bg-primary/10 rounded transition-colors group"
+                  title="Reset session cost"
+                >
+                  <RotateCcw className="w-3 h-3 text-muted-foreground group-hover:rotate-[20deg] transition-transform" />
+                </button>
+              )}
             </div>
             
-            <div className="space-y-1.5">
-              <div className="flex justify-between items-end">
-                <span className="text-xl font-bold tabular-nums text-primary/95 antialiased">${sessionCost.toFixed(3)}</span>
-                <div className="flex items-center gap-1.5 pb-1">
-                  <span className="text-[10px] text-muted-foreground font-medium opacity-50">Limit: $</span>
-                  <input 
-                    type="number"
-                    step="0.1"
-                    min="0"
-                    value={maxSessionBudget}
-                    onChange={(e) => setMaxSessionBudget(parseFloat(e.target.value) || 0)}
-                    className="w-12 bg-transparent border-none p-0 text-[10px] focus:ring-0 font-extrabold text-primary underline decoration-dotted decoration-primary/20"
-                  />
+            {!budgetCollapsed && (
+              <div className="p-4 rounded-xl bg-primary/5 border border-primary/10 space-y-3 font-sans">
+                <div className="space-y-1.5">
+                  <div className="flex justify-between items-end">
+                    <span className="text-xl font-bold tabular-nums text-primary/95 antialiased">${sessionCost.toFixed(3)}</span>
+                    <div className="flex items-center gap-1.5 pb-1">
+                      <span className="text-[10px] text-muted-foreground font-medium opacity-50">Limit: $</span>
+                      <input 
+                        type="number"
+                        step="0.1"
+                        min="0"
+                        value={maxSessionBudget}
+                        onChange={(e) => setMaxSessionBudget(parseFloat(e.target.value) || 0)}
+                        className="w-12 bg-transparent border-none p-0 text-[10px] focus:ring-0 font-extrabold text-primary underline decoration-dotted decoration-primary/20"
+                      />
+                    </div>
+                  </div>
+                  <Progress value={budgetPercentage} className={cn("h-1.5 overflow-hidden", isBudgetCritical ? "[&>div]:bg-amber-500" : "[&>div]:bg-emerald-500")} />
                 </div>
-              </div>
-              <Progress value={budgetPercentage} className={cn("h-1.5 overflow-hidden", isBudgetCritical ? "[&>div]:bg-amber-500" : "[&>div]:bg-emerald-500")} />
-            </div>
 
-            {isBudgetCritical && (
-              <div className="flex items-center gap-1.5 text-[10px] text-amber-500 font-semibold animate-pulse pt-0.5">
-                <AlertTriangle className="w-3.5 h-3.5" />
-                <span>Nearing budget limit</span>
+                {isBudgetCritical && (
+                  <div className="flex items-center gap-1.5 text-[10px] text-amber-500 font-semibold animate-pulse pt-0.5">
+                    <AlertTriangle className="w-3.5 h-3.5" />
+                    <span>Nearing budget limit</span>
+                  </div>
+                )}
               </div>
             )}
           </div>

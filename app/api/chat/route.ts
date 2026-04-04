@@ -1,8 +1,106 @@
 import { performSearch } from '@/lib/search-utils'
 
+// Ollama local configuration
+const OLLAMA_BASE_URL = process.env.OLLAMA_BASE_URL || 'http://localhost:11434'
+
+// Check if modelId uses local Ollama
+function isLocalModel(modelId: string): boolean {
+  return modelId?.startsWith('ollama/') || modelId?.startsWith('local/')
+}
+
+function extractOllamaModel(modelId: string): string {
+  return modelId?.replace(/^(ollama|local)\//, '')
+}
+
 export async function POST(req: Request) {
   try {
     const { messages, modelId, temperature, maxTokens, webSearch } = await req.json();
+    
+    console.log(`[API] Chat Request: model=${modelId}, messages=${messages?.length}, webSearch=${webSearch}`);
+
+    // === LOCAL OLLAMA MODE ===
+    if (isLocalModel(modelId)) {
+      const ollamaModel = extractOllamaModel(modelId)
+      console.log(`[Ollama] Using local model: ${ollamaModel}`)
+
+      const ollamaPayload = {
+        model: ollamaModel,
+        messages: messages,
+        stream: true,
+        options: {
+          temperature: temperature ?? 0.7,
+          num_predict: maxTokens ?? 4096,
+        }
+      }
+
+      const ollamaRes = await fetch(`${OLLAMA_BASE_URL}/api/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(ollamaPayload),
+      })
+
+      if (!ollamaRes.ok) {
+        const errorText = await ollamaRes.text()
+        return new Response(JSON.stringify({ 
+          error: `Ollama Error: ${ollamaRes.statusText}`, 
+          details: errorText 
+        }), { 
+          status: ollamaRes.status, 
+          headers: { 'Content-Type': 'application/json' } 
+        })
+      }
+
+      // Stream Ollama response (different format than OpenAI)
+      const encoder = new TextEncoder()
+      const decoder = new TextDecoder()
+      
+      const stream = new ReadableStream({
+        async start(controller) {
+          if (!ollamaRes.body) {
+            controller.close()
+            return
+          }
+          const reader = ollamaRes.body.getReader()
+          let buffer = ''
+
+          try {
+            while (true) {
+              const { done, value } = await reader.read()
+              if (done) break
+
+              buffer += decoder.decode(value, { stream: true })
+              const lines = buffer.split('\n')
+              buffer = lines.pop() || ''
+
+              for (const line of lines) {
+                if (line.trim()) {
+                  try {
+                    const data = JSON.parse(line)
+                    // Ollama format: { message: { content: "..." }, done: false }
+                    if (data.message?.content) {
+                      controller.enqueue(encoder.encode(data.message.content))
+                    }
+                    if (data.done) {
+                      console.log(`[Ollama] Complete. Total tokens: ~${data.eval_count || '?'}`)
+                    }
+                  } catch (e) {
+                    // Skip malformed lines
+                  }
+                }
+              }
+            }
+          } finally {
+            reader.releaseLock()
+          }
+          
+          controller.close()
+        }
+      })
+
+      return new Response(stream, { headers: { 'Content-Type': 'text/plain; charset=utf-8' } })
+    }
+
+    // === OPENROUTER MODE ===
     const apiKey = process.env.OPENROUTER_API_KEY;
     
     if (!apiKey) {
@@ -11,8 +109,6 @@ export async function POST(req: Request) {
         headers: { 'Content-Type': 'application/json' } 
       });
     }
-
-    console.log(`[API] Chat Request: model=${modelId}, messages=${messages?.length}, webSearch=${webSearch}`);
 
     const makeRequest = async (currentMessages: any[], useTools: boolean, usePlugins: boolean) => {
       const dateString = new Date().toLocaleDateString('ru-RU', { 

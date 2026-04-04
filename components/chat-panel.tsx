@@ -50,6 +50,7 @@ import { downloadCSV, downloadPDF } from '@/lib/export-utils'
 import { ModelResponse, ArenaConfig } from '@/lib/types'
 import { executePipeline, getTopologicalOrder } from '@/lib/executor'
 import { MarkdownRenderer } from '@/components/markdown-renderer'
+import { FilePickerDialog } from '@/components/file-picker-dialog'
 
 function formatFileSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`
@@ -743,23 +744,19 @@ export function ChatPanel() {
             />
             {/* File Attach Button (Inside Textarea) */}
             <div className="absolute left-3 bottom-3">
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-8 w-8 text-muted-foreground hover:text-primary"
-                onClick={() => fileInputRef.current?.click()}
-                disabled={uploadingFiles}
-                title="Attach file"
-              >
-                <Paperclip className={cn("w-4 h-4", attachedFiles.length > 0 && "text-primary")} />
-              </Button>
-              <input
-                ref={fileInputRef}
-                type="file"
-                multiple
-                className="hidden"
-                accept="*/*"
-                onChange={(e) => e.target.files && handleFileUpload(e.target.files)}
+              <FilePickerDialog
+                onSelect={handleFileUpload}
+                triggerButton={
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-8 w-8 text-muted-foreground hover:text-primary"
+                    disabled={uploadingFiles}
+                    title="Attach file"
+                  >
+                    <Paperclip className={cn("w-4 h-4", attachedFiles.length > 0 && "text-primary")} />
+                  </Button>
+                }
               />
             </div>
           </div>

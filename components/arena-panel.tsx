@@ -49,6 +49,7 @@ import { ArenaStats } from './arena-stats'
 import { KnowledgeBase } from './knowledge-base'
 import { executePipeline } from '@/lib/executor'
 import { BatchRunnerModal } from './batch-runner-modal'
+import { InteractivePipeline } from './interactive-pipeline'
 
 export function ArenaPanel() {
   const nodes = useArenaStore(state => state.nodes)
@@ -60,7 +61,7 @@ export function ArenaPanel() {
   const activeConfigId = useArenaStore(state => state.activeConfigId)
   const saveConfig = useArenaStore(state => state.saveConfig)
   const loadConfig = useArenaStore(state => state.loadConfig)
-  const [arenaTab, setArenaTab] = useState<'canvas' | 'models' | 'stats' | 'knowledge'>('canvas')
+  const [arenaTab, setArenaTab] = useState<'canvas' | 'interactive' | 'models' | 'stats' | 'knowledge'>('canvas')
   const [pipelineInput, setPipelineInput] = useState('') // Added local state
   const [isExecuting, setIsExecuting] = useState(false) // Added local state
   const [showEstimateDialog, setShowEstimateDialog] = useState(false)
@@ -202,6 +203,10 @@ export function ArenaPanel() {
               <TabsTrigger value="canvas" className="gap-2 text-[10px] sm:text-xs px-2 sm:px-3">
                 <GitBranch className="w-3 h-3 sm:w-4 sm:h-4" />
                 Pipeline
+              </TabsTrigger>
+              <TabsTrigger value="interactive" className="gap-2 text-[10px] sm:text-xs px-2 sm:px-3">
+                <Zap className="w-3 h-3 sm:w-4 sm:h-4" />
+                Interactive
               </TabsTrigger>
               <TabsTrigger value="models" className="gap-2 text-[10px] sm:text-xs px-2 sm:px-3">
                 <Sparkles className="w-3 h-3 sm:w-4 sm:h-4" />
@@ -363,6 +368,11 @@ export function ArenaPanel() {
               </div>
             )}
           </>
+        )}
+        {arenaTab === 'interactive' && (
+          <div className="flex-1 p-4 overflow-auto">
+            <InteractivePipeline />
+          </div>
         )}
         {arenaTab === 'models' && <ModelLibrary />}
         {arenaTab === 'stats' && <ArenaStats />}

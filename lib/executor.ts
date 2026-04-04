@@ -3,6 +3,7 @@ import { useArenaStore } from './store'
 import { getTokenCount } from './tokenizer'
 import { splitForRAG, estimateTokens } from './text-splitter'
 import { SimpleVectorStore, getVectorStore } from './simple-vector-store'
+import { getAgentPresetById, presetToArenaNodeData } from './agent-config'
 
 // Per-node timeout — if a model hangs, we skip it and continue the pipeline
 const NODE_TIMEOUT_MS = 300_000 // 300 seconds (5 minutes)
@@ -47,7 +48,7 @@ export function getTopologicalOrder(nodes: ArenaNode[], edges: ArenaEdge[]): str
       if (typeOrder[nodeA.type as keyof typeof typeOrder] !== typeOrder[nodeB.type as keyof typeof typeOrder]) {
         return typeOrder[nodeA.type as keyof typeof typeOrder] - typeOrder[nodeB.type as keyof typeof typeOrder]
       }
-      return nodeA.data.label.localeCompare(nodeB.data.label)
+      return (nodeA.data.label || nodeA.label).localeCompare(nodeB.data.label || nodeB.label)
     })
   }
 
@@ -925,24 +926,216 @@ export async function executePipeline(
         }
         else if (node.type === 'search') {
           const query = node.data.searchQuery?.replace('{{input}}', context) || context
-          const maxResults = node.data.maxResults || 5
+          const maxResults = node.data.maxResults || 10
+          const sources = node.data.searchSources || ['duckduckgo', 'searxng']
+          const scrapeContent = node.data.scrapeContent ?? false
+          const language = node.data.searchLanguage || 'en'
+          const rssFeeds = node.data.rssFeeds || []
           
-          const res = await fetch('/api/search', {
+          // Use multi-source search if available
+          const res = await fetch('/api/search-multi', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ query, maxResults }),
+            body: JSON.stringify({ 
+              query, 
+              maxResults, 
+              sources, 
+              scrapeContent, 
+              language,
+              rssFeeds
+            }),
             signal: signal || undefined
           })
 
           if (!res.ok) {
-            const errData = await res.json().catch(() => ({}))
-            throw new Error(errData.error || 'Search API error')
+            // Fallback to original search
+            console.warn('[Search] Multi-source failed, falling back to DDG')
+            const fallbackRes = await fetch('/api/search', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ query, maxResults }),
+              signal: signal || undefined
+            })
+            
+            if (!fallbackRes.ok) {
+              const errData = await fallbackRes.json().catch(() => ({}))
+              throw new Error(errData.error || 'Search API error')
+            }
+            
+            const fallbackData = await fallbackRes.json()
+            result = fallbackData.results
+          } else {
+            const data = await res.json()
+            result = data.results
+              ? data.results.map((r: any) => {
+                  const sourceTag = r.source ? `[${r.source}]` : ''
+                  return `${sourceTag} **${r.title}**\n${r.snippet}\nURL: ${r.url}`
+                }).join('\n\n---\n\n')
+              : 'No results found'
+            
+            // Add summary
+            if (data.summary) {
+              result = `[Search: ${data.summary.totalResults} results from ${data.summary.sources.join(', ')}]\n\n${result}`
+            }
           }
-
-          const data = await res.json()
-          result = data.results
+          
           const nodeEndTime = Date.now()
           onNodeUpdate(nodeId, 'completed', result, 0, nodeEndTime - nodeWorkStart, undefined, undefined, undefined, undefined, nodeStartTime, nodeEndTime)
+        }
+        // ==================== SPECIALIZED AGENT NODES ====================
+        // classifier, analyst, researcher, synthesizer, summarizer — все обрабатываются одинаково
+        // как model-узлы, но со своими пресетами
+        else if (node.type === 'classifier' || node.type === 'analyst' || 
+                 node.type === 'researcher' || node.type === 'synthesizer' || 
+                 node.type === 'summarizer') {
+          
+          // Если есть agentPresetId, используем его для настройки
+          if (node.data.agentPresetId) {
+            const preset = getAgentPresetById(node.data.agentPresetId)
+            if (preset) {
+              // Применяем пресет к узлу если модель ещё не настроена
+              if (!node.data.model?.id) {
+                node.data = { ...node.data, ...presetToArenaNodeData(preset) as any }
+              }
+            }
+          }
+
+          const modelId = node.data.model?.id || 'google/gemma-2-2b-it:free'
+          const controller = new AbortController()
+          const timeoutId = setTimeout(() => controller.abort(), NODE_TIMEOUT_MS)
+
+          // Build prompt from template or context
+          const systemPrompt = node.data.model?.systemPrompt || ''
+          const userPrompt = node.data.prompt 
+            ? (node.data.prompt as string).replace(/{{input}}/g, finalContext).replace(/{{context}}/g, finalContext)
+            : finalContext
+
+          const promptText = systemPrompt ? `${systemPrompt}\n\n${userPrompt}` : userPrompt
+          const promptTokens = getTokenCount(promptText, modelId)
+
+          // Handle strict output mode for classifiers (minimal tokens)
+          const isStrictOutput = node.data.agentPresetId?.includes('classifier') || 
+                                 node.data.agentPresetId?.includes('router')
+
+          if (options.isDryRun) {
+            const completionTokens = 0
+            const { promptCost, completionCost } = allocatePromptCompletionCosts(promptTokens, completionTokens, modelId)
+            const nodeEndTime = Date.now()
+            result = `--- DRY RUN (${node.type.toUpperCase()}) ---\n\n[SYSTEM]\n${systemPrompt}\n\n[USER]\n${userPrompt}`
+            console.log(`[PIPELINE] Dry Run ${node.type}: ${node.data.label}`)
+            onNodeUpdate(
+              nodeId, 'completed', result, completionTokens, nodeEndTime - nodeWorkStart,
+              promptTokens, completionTokens, promptCost, completionCost, nodeStartTime, nodeEndTime
+            )
+            nodeResults[nodeId] = result
+            return { nodeId }
+          }
+
+          // Build request body optimized for token efficiency
+          const requestBody = {
+            modelId,
+            messages: [
+              ...(systemPrompt ? [{ role: 'system', content: systemPrompt }] : []),
+              { role: 'user', content: userPrompt }
+            ],
+            temperature: node.data.model?.temperature ?? 0.1,
+            maxTokens: node.data.model?.maxTokens ?? (isStrictOutput ? 20 : 500),
+            webSearch: node.data.model?.webSearch,
+            // JSON mode for structured output
+            ...(node.data.jsonMode ? { response_format: { type: 'json_object' } } : {}),
+          }
+
+          // Use fallback chain if configured
+          const fallbackModels = node.data.model?.fallbackModels
+          const fallbackTimeoutMs = node.data.model?.fallbackTimeoutMs ?? 5000
+          const hasFallbackChain = fallbackModels && fallbackModels.length > 0
+
+          let res: Response
+          let usedModelId = modelId
+          let isFallback = false
+
+          if (hasFallbackChain) {
+            const fallbackMode = node.data.model?.fallbackMode ?? 'timeout'
+            const fallbackResult = await fetchWithSmartFallback(
+              modelId, fallbackModels, fallbackTimeoutMs, fallbackMode, requestBody,
+              signal,
+              (status: string, tryingModelId: string) => {
+                onNodeUpdate(nodeId, 'running', `[${status}] ${tryingModelId}`, 0)
+              }
+            )
+            res = fallbackResult.response
+            usedModelId = fallbackResult.usedModelId
+            isFallback = fallbackResult.isFallback
+          } else {
+            res = await fetchWithRetry('/api/chat', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              signal: controller.signal,
+              body: JSON.stringify(requestBody)
+            })
+          }
+
+          if (!res.body) { clearTimeout(timeoutId); throw new Error('No body') }
+
+          const reader = res.body.getReader()
+          const decoder = new TextDecoder()
+          let text = ''
+          let lastUpdate = 0
+          const THROTTLE_MS = 100
+
+          try {
+            while (true) {
+              if (signal?.aborted) {
+                reader.cancel()
+                throw new Error('Aborted')
+              }
+              const { value, done } = await reader.read()
+              if (done) break
+              text += decoder.decode(value, { stream: true })
+              
+              const now = Date.now()
+              if (now - lastUpdate > THROTTLE_MS) {
+                onNodeUpdate(nodeId, 'running', text, Math.ceil(text.length / 3.5))
+                lastUpdate = now
+              }
+            }
+          } catch (err: any) {
+            if (text.length > 50) {
+              console.warn(`Streaming interrupted for ${node.type} ${nodeId}, returning partial`, err)
+              text += '\n\n[Note: Connection interrupted. This response is incomplete.]'
+            } else {
+              throw err
+            }
+          } finally {
+            clearTimeout(timeoutId)
+            reader.releaseLock()
+          }
+          result = text
+
+          // Add fallback info if applicable
+          if (isFallback) {
+            const fallbackMode = node.data.model?.fallbackMode ?? 'timeout'
+            const reason = fallbackMode === 'on_error' ? 'failed' : `timed out after ${fallbackTimeoutMs}ms`
+            result = `[Fallback Used: Primary model ${reason}, switched to ${usedModelId}]\n\n${result}`
+          }
+
+          const hasErrorIndicator = result.includes('[Error]') || result.includes('[Tool execution failed]')
+          const completionTokens = getTokenCount(result, usedModelId)
+          const { promptCost, completionCost } = allocatePromptCompletionCosts(promptTokens, completionTokens, usedModelId)
+          const nodeEndTime = Date.now()
+          onNodeUpdate(
+            nodeId,
+            hasErrorIndicator ? 'error' : 'completed',
+            result,
+            completionTokens,
+            nodeEndTime - nodeWorkStart,
+            promptTokens,
+            completionTokens,
+            promptCost,
+            completionCost,
+            nodeStartTime,
+            nodeEndTime
+          )
         }
         else if (node.type === 'aggregator') {
           const defaultSystem = 'You are an intelligent aggregator. Your task is to collect, beautifully format, and synthesize the following outputs into a cohesive final response.'

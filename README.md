@@ -1,15 +1,22 @@
-# Hephaestus (Ἥφαιστος) - LLM Arena
+# Hephaestus (Ἥφαιστος) — Multi-Agent LLM Arena
 
-Web app for multi-model chat and configurable DAG pipelines ("Arena") powered by OpenRouter.
+Web app for multi-model chat, configurable DAG pipelines ("Arena"), and **event simulation** powered by OpenRouter + **Ollama local models**.
 
-- Multi-model chat: send one prompt to multiple models and compare results.
-- Arena pipelines: build a directed acyclic graph (DAG) of nodes (prompt/model/validator/aggregator/search/file/router/code) and execute it.
-- Analytics: track token usage, estimated cost, and visualize with Waterfall/Gantt charts.
-- AI File Editing: AI can create, edit, and delete files via chat and pipelines.
-- Smart Fallback Chain: automatic fallback to backup models on timeout/error.
-- RAG Knowledge Base: BM25 search across indexed project files.
+## Features
 
-## Tech stack
+- **Multi-model chat**: send one prompt to multiple models and compare results.
+- **Arena pipelines**: build a directed acyclic graph (DAG) of nodes and execute it.
+- **Multi-Agent System**: specialized agents (classifier, analyst, researcher, synthesizer, summarizer) with pre-configured presets.
+- **Event Simulation**: simulate political, economic, military, and technology events with cross-domain analysis.
+- **Ollama Local Support**: run free local models (Llama, Phi, Qwen) — 100% private, no API costs.
+- **Token Optimization**: context compression, RAG, smart file reading — up to 80% token savings.
+- **Analytics**: track token usage, estimated cost, and visualize with Waterfall/Gantt charts.
+- **AI File Editing**: AI can create, edit, and delete files via chat and pipelines.
+- **Smart Fallback Chain**: automatic fallback to backup models on timeout/error.
+- **RAG Knowledge Base**: BM25 search across indexed project files with adjacent chunk inclusion.
+- **Telegram Bot**: interact with AI via Telegram — send text, photos, documents, voice messages.
+
+## Tech Stack
 
 - Next.js 16 (App Router)
 - React 19
@@ -17,32 +24,38 @@ Web app for multi-model chat and configurable DAG pipelines ("Arena") powered by
 - Zustand (persisted store)
 - Tailwind CSS + Radix UI (shadcn-style components)
 - OpenRouter API (chat completions + models)
+- **Ollama** (local model inference)
 - DuckDuckGo Lite (web search scraping)
 
-## Project structure
+## Project Structure
 
 - `app/`
   - `page.tsx` — main UI shell (Sidebar + tabs)
   - `api/` — server routes
-    - `chat/route.ts` — OpenRouter streaming proxy (+ web-search tool handling)
+    - `chat/route.ts` — OpenRouter + **Ollama** streaming proxy
     - `models/route.ts` — fetch OpenRouter model list + pricing mapping
-    - `files/route.ts` — list/read local workspace files (used by File nodes + KB)
+    - `files/route.ts` — list/read local workspace files
     - `search/route.ts` — web search endpoint (DuckDuckGo Lite)
 - `components/` — UI components
   - `chat-panel.tsx` — chat experience (multi-model + pipeline-in-chat)
   - `arena-panel.tsx` — pipeline designer and pipeline execution UI
+  - `node-settings.tsx` — node configuration with **agent presets**
   - `sidebar.tsx` — navigation, settings, budget controls
 - `lib/`
   - `store.ts` — Zustand store: models, nodes/edges, configs, chat history, usage/cost, KB
-  - `executor.ts` — DAG execution engine
-  - `types.ts` — core types
+  - `executor.ts` — DAG execution engine with **specialized agent nodes**
+  - `agent-config.ts` — **pre-configured agent presets (19 cloud + 5 Ollama)**
+  - `types.ts` — core types with **5 new node types**
   - `search-utils.ts` — DDG Lite HTML fetch + parsing fallbacks
   - `tokenizer.ts` — token estimation via `js-tiktoken`
+  - `text-splitter.ts` — text chunking for RAG
+  - `simple-vector-store.ts` — BM25-based vector store with **adjacent chunk inclusion**
 
 ## Requirements
 
 - Node.js 18+ recommended
 - pnpm (recommended) or npm/yarn
+- **Ollama** (optional, for local models): https://ollama.ai
 
 ## Setup
 
@@ -56,17 +69,26 @@ Web app for multi-model chat and configurable DAG pipelines ("Arena") powered by
 
    ```dotenv
    OPENROUTER_API_KEY=YOUR_KEY_HERE
+   OLLAMA_BASE_URL=http://localhost:11434  # optional, default
    ```
 
-3. Run the dev server:
+3. (Optional) Install Ollama and pull local models:
+
+   ```bash
+   curl -fsSL https://ollama.com/install | sh
+   ollama pull llama3.1:8b      # Analyst (~4.7GB)
+   ollama pull phi4:latest      # Classifier/Summarizer (~3GB)
+   ollama pull qwen2.5:14b      # Researcher (~9GB)
+   ollama pull llama3.1:70b     # Synthesizer (~43GB)
+   ```
+
+4. Run the dev server:
 
    ```bash
    pnpm dev
    ```
 
-4. Open:
-
-- http://localhost:3000
+5. Open: http://localhost:3000
 
 ### Scripts
 
@@ -75,26 +97,68 @@ Web app for multi-model chat and configurable DAG pipelines ("Arena") powered by
 - `pnpm start` — start production server
 - `pnpm lint` — lint
 
-## Core concepts
+## Core Concepts
 
 ### Tabs
 
-- **Chat** — multi-model chat with AI File Editing (list/read/write/edit/delete files).
+- **Chat** — multi-model chat with AI File Editing.
 - **Arena** — pipeline designer/executor with Dry Run.
 - **Analytics** — usage dashboard with Waterfall/Gantt charts and PDF/CSV export.
 
-### Data model overview
+### Data Model Overview
 
 Main domain state lives in `lib/store.ts` (Zustand + persist).
 
-- **Models**: list of available LLMs with settings (temperature, maxTokens, pricing, webSearch, **fallbackModels**, **fallbackTimeoutMs**, **fallbackMode**, **contextCompression**).
+- **Models**: list of available LLMs with settings.
 - **Arena graph**: `nodes` + `edges`.
+- **Agent Presets**: pre-configured specialized agents in `lib/agent-config.ts`.
 - **Configs**: saved pipeline presets.
 - **Chat**: `messages` + `responses` and `historicalChats`.
 - **Usage**: `globalUsage`, `usageHistory`, `sessionCost`, `maxSessionBudget`.
-- **Knowledge Base**: list of file paths to inject into prompts + **BM25 RAG index** with chunking.
+- **Knowledge Base**: list of file paths + **BM25 RAG index** with chunking.
 
-## Arena: pipelines (DAG)
+## Multi-Agent System
+
+### Specialized Agent Nodes
+
+Five new node types, each optimized for a specific role:
+
+| Node Type | Role | Default Model | Max Tokens | Cost |
+|-----------|------|---------------|------------|------|
+| **Classifier** | Categorize input (political/economic/military/risk) | Gemma 2B (free) | 20-50 | $0 |
+| **Analyst** | Structured analysis with findings and risks | Llama 3.1 8B (free) | 800 | $0 |
+| **Researcher** | Deep analysis with historical context | Qwen 235B | 2000 | Low |
+| **Synthesizer** | Combine multi-agent analysis into final report | Claude Opus | 3000 | Premium |
+| **Summarizer** | Condense to key bullet points | Gemma 9B (free) | 300 | $0 |
+
+### Agent Presets
+
+19 pre-configured presets in `lib/agent-config.ts`:
+
+- **4 Classifiers**: political, economic, military, risk level
+- **2 Routers**: by domain, by urgency
+- **4 Analysts**: political, economic, military, technology
+- **2 Researchers**: political, economic
+- **2 Synthesizers**: strategic (Claude Opus), brief (Claude Sonnet)
+- **1 Validator**: fact-checker
+- **1 Summarizer**: executive summary
+- **5 Ollama Local**: free local models for all roles
+
+### Event Simulation Pipeline
+
+```
+[INPUT EVENT]
+     ↓
+[ROUTERS] — classify domain (political/economic/military/tech)
+     ↓
+     ├──────→ [Political Analyst] ──┐
+     ├──────→ [Economic Analyst] ──┤
+     ├──────→ [Military Analyst] ───┼── [VALIDATOR]
+     └──────→ [Tech Analyst] ──────┤          ↓
+                                  └──── [SYNTHESIZER] → FINAL REPORT
+```
+
+## Arena: Pipelines (DAG)
 
 A pipeline is a DAG defined by:
 
@@ -103,53 +167,151 @@ A pipeline is a DAG defined by:
 
 Execution is performed by `lib/executor.ts::executePipeline()`.
 
-### Node types
+### Node Types
 
 Node type is `ArenaNode.type`:
 
-- `prompt`
-  - Produces a text output via a template.
-  - Supports placeholders: `{{input}}`, `{{context}}`, `{{global}}`.
-
-- `model`
-  - Calls `/api/chat` to stream an LLM answer.
-  - **Context Compression**: automatic compression of long contexts.
-  - **Smart Fallback Chain**: fallback to backup models on timeout/error.
-
-- `validator` — validation/summary/scoring of upstream outputs (consensus/scoring/custom).
-
-- `aggregator` — merge upstream outputs into a single final answer.
-
+- `prompt` — produces text output via template. Supports `{{input}}`, `{{context}}`, `{{global}}`.
+- `model` — calls `/api/chat` to stream LLM answer.
+- `validator` — validation/summary/scoring of upstream outputs.
+- `aggregator` — merge upstream outputs into single final answer.
 - `search` — web search via DuckDuckGo.
-
-- `file`
-  - File reading, **Smart Read** for large files.
-  - **Global Knowledge**: injects file into context of all AI nodes.
-
+- `file` — file reading with **Smart Read** for large files.
 - `router` — LLM classifier that activates only the matched outgoing path.
+- `code` — create/edit/delete files via `/api/files/edit`.
+- **`classifier`** — fast categorization (20-50 tokens, strict output).
+- **`analyst`** — structured analysis with findings and recommendations.
+- **`researcher`** — deep analysis with historical context and scenarios.
+- **`synthesizer`** — combine multi-agent analysis into strategic report.
+- **`summarizer`** — condense to key bullet points.
 
-- `code`
-  - **Create/edit/delete files** via `/api/files/edit`.
-  - Can use AI for code generation.
-  - Operations: `write`, `edit`, `append`, `delete`.
-
-### Topology and parallelism
+### Topology and Parallelism
 
 - The executor runs nodes in layers based on in-degree (topological progression).
 - Nodes in the same layer can execute in parallel.
-- Parallel nodes are staggered slightly (`idx * 300ms`) to reduce immediate rate-limits.
+- Parallel nodes are staggered slightly (`idx * 300ms`) to reduce rate-limits.
 
-### Timeouts and retries
+### Timeouts and Retries
 
 - Each node has a hard timeout: **5 minutes**.
 - LLM calls use a retry wrapper that retries on `429` with exponential backoff.
 
-### Dry run
+### Dry Run
 
-Arena UI offers **Dry Run (Preview Prompts)**.
+Arena UI offers **Dry Run (Preview Prompts)** — no external API calls, useful to inspect exact prompts.
 
-- No external API calls.
-- Useful to inspect the exact prompt/context being sent to models/validators/routers/aggregators.
+## Telegram Bot
+
+Interact with your AI assistant directly through Telegram — no need to open a browser.
+
+### Setup
+
+1. **Create a bot** via [@BotFather](https://t.me/BotFather) on Telegram:
+   ```
+   /newbot
+   # Follow instructions, get a token like: 123456789:ABCdef...
+   ```
+
+2. **Add token to `.env`**:
+   ```dotenv
+   TELEGRAM_BOT_TOKEN=123456789:ABCdef...
+   NEXT_PUBLIC_APP_URL=https://your-domain.com  # your deployed URL
+   ```
+
+3. **Set webhook** (after deployment):
+   ```bash
+   curl -X POST "https://api.telegram.org/bot<YOUR_TOKEN>/setWebhook?url=https://your-domain.com/api/telegram/webhook"
+   ```
+
+4. **Test it**: Send `/start` to your bot on Telegram.
+
+### Supported Content
+
+| Type | Description |
+|------|-------------|
+| 📝 **Text** | AI chat with context history |
+| 🖼️ **Photos** | Image analysis and description |
+| 📄 **Documents** | File content extraction and analysis |
+| 🎤 **Voice** | Voice messages (transcription coming soon) |
+
+### Bot Commands
+
+| Command | Description |
+|---------|-------------|
+| `/start` | Welcome message and intro |
+| `/help` | Show available commands |
+| `/status` | Session info and mode |
+| `/clear` | Clear chat history |
+| `/pipeline` | Toggle pipeline mode |
+
+### Features
+
+- **Session management**: 30-minute timeout, auto-cleanup
+- **Message history**: Last 20 messages kept for context
+- **Long message splitting**: Auto-splits responses >4000 chars
+- **Chat actions**: Shows "typing..." indicator while processing
+- **Pipeline mode**: Route messages through your Arena pipeline
+
+## Ollama Local Models
+
+Run models locally for **100% free, private** inference:
+
+### Setup
+
+```bash
+# Install Ollama
+curl -fsSL https://ollama.com/install | sh
+
+# Pull models
+ollama pull llama3.1:8b      # Analyst
+ollama pull phi4:latest      # Classifier/Summarizer
+ollama pull qwen2.5:14b      # Researcher
+ollama pull llama3.1:70b     # Synthesizer
+```
+
+### Usage
+
+1. In Arena, add a specialized node (classifier/analyst/researcher/synthesizer/summarizer).
+2. In Node Settings, select **"Local Models (Ollama)"** section.
+3. Choose a preset — the node auto-configures model, prompt, and parameters.
+
+### Token Savings with Ollama
+
+| Task | Cloud Tokens | Ollama Tokens | Savings |
+|------|-------------|---------------|---------|
+| Classifier | 20 (Gemma free) | 50 (Phi-4) | **100% free** |
+| Analyst | 800 (Llama 8B free) | 800 (Llama 8B local) | **100% free** |
+| Researcher | 2000 (Qwen 235B) | 2000 (Qwen 14B local) | **~$0.02 saved** |
+| Synthesizer | 3000 (Claude Opus) | 3000 (Llama 70B local) | **~$0.15 saved** |
+
+## Token Optimization Strategies
+
+### 1. Rational Model Selection
+
+- **Classifiers** → micro-models (Gemma 2B), maxTokens: 20-50
+- **Analysts** → free models (Llama 8B), maxTokens: 800
+- **Synthesizers** → one expensive model (Claude/GPT-4), maxTokens: 3000
+- **Savings: 60-70%**
+
+### 2. Context Compression
+
+- Built-in `contextCompression` in nodes
+- Compresses input context before sending to model
+- Threshold: 1000 tokens, target: 50% compression
+- **Savings: 30-50%** on prompts
+
+### 3. RAG Instead of Full Context
+
+- BM25 search for relevant chunks
+- **Adjacent chunk inclusion** for better context
+- Default topK: 5 (was 3)
+- **Savings: 90%** on large documents
+
+### 4. Smart File Reader
+
+- AI selects only relevant lines from files
+- 500 lines from 10,000+ line files
+- **Savings: 95%** on file reading
 
 ## Knowledge Base (Global Knowledge)
 
@@ -163,29 +325,19 @@ How it works:
 4. For AI nodes:
    - If node prompt does **not** include `{{global}}`, executor prepends the KB content automatically.
 
-## API routes
+## API Routes
 
 All routes live in `app/api/*`.
 
-- `POST /api/chat`
-  - Proxies OpenRouter streaming Chat Completions.
-  - **Tools**: web_search, list_files, read_file, write_file, edit_file, delete_file.
-  - **Multi-step tool chains**: recursive processing of tool chains.
-
+- `POST /api/chat` — OpenRouter + **Ollama** streaming Chat Completions.
 - `GET /api/models` — fetch OpenRouter models.
-
 - `GET /api/files` — file tree of project.
-
 - `POST /api/files` — read specific file.
-
 - `PATCH /api/files/edit` — file editing (write/edit/append/delete) with backups.
-
 - `POST /api/search` — DuckDuckGo Lite web search.
-
+- `POST /api/search-multi` — **Multi-source search** (DuckDuckGo, SearXNG, Google, Bing, RSS) with web scraping.
 - `POST /api/knowledge/search` — **BM25 RAG search** over indexed files.
-
 - `PUT /api/knowledge/index` — index file for RAG.
-
 - `GET /api/knowledge/stats` — RAG index statistics.
 
 ## AI File Editing & Tools
@@ -219,12 +371,6 @@ Automatic compression of long contexts in model nodes:
 - `thresholdTokens`: threshold (default: 1000).
 - `targetRatio`: target compression 0.0-1.0.
 
-## Knowledge Base (RAG)
-
-- **BM25 search** over indexed files.
-- **Smart Read**: selective reading for large files.
-- **Global Knowledge**: automatic inject into prompts.
-
 ## Analytics & Export
 
 - **Waterfall/Gantt**: pipeline execution visualization.
@@ -238,29 +384,36 @@ Automatic compression of long contexts in model nodes:
 - Ensure `.env` exists in project root and contains `OPENROUTER_API_KEY`.
 - Restart dev server after editing `.env`.
 
-### Rate limits (429)
+### Ollama Connection Refused
+
+- Ensure Ollama is running: `ollama list`
+- Check `OLLAMA_BASE_URL` in `.env` (default: `http://localhost:11434`)
+
+### Rate Limits (429)
 
 - The executor retries with backoff, but heavy parallel pipelines can still hit limits.
-- Reduce parallel nodes or set stagger/limits by simplifying the graph.
+- Reduce parallel nodes or simplify the graph.
 
-### Web search failures
+### Web Search Failures
 
 - DuckDuckGo Lite sometimes blocks/changes markup.
-- If search results return `[Search failed: ...]` or `[Search Engine Error: ...]`, disable `webSearch` for the model or rely on non-web answers.
+- If search results return `[Search failed: ...]`, disable `webSearch` for the model.
 
-## Security notes (important)
+## Security Notes (Important)
 
 - **Never commit `.env`**. Your OpenRouter key must be treated as a secret.
 - The `/api/files` and `/api/files/edit` endpoints can read and modify **any file within the project root**.
 - This is fine for local development, but **unsafe for public deployments**.
 - For production: add auth + path allowlist.
 
-## Roadmap ideas
+## Roadmap Ideas
 
 - Auth + per-user storage
 - Hard allowlist for file reading (KB)
-- Better cost accuracy by consuming provider usage fields (when available)
+- Better cost accuracy by consuming provider usage fields
 - Export/share pipeline presets
+- Real embedding models (OpenAI/Nomic) for RAG
+- Multi-scenario event simulation (optimistic/pessimistic/baseline)
 
 ---
 

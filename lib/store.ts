@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { Model, ArenaNode, ArenaEdge, ChatMessage, ModelResponse, ArenaConfig, HistoricalChat, NodeStatus, UsageEvent } from './types'
 import { getTokenCount } from './tokenizer'
+import { PipelineState } from './interactive-executor'
 
 interface ArenaStore {
   // Models
@@ -37,8 +38,8 @@ interface ArenaStore {
   deleteConfig: (id: string) => void
   
   // UI state
-  activeTab: 'chat' | 'arena' | 'dashboard'
-  setActiveTab: (tab: 'chat' | 'arena' | 'dashboard') => void
+  activeTab: 'chat' | 'arena' | 'dashboard' | 'telegram' | 'events' | 'ide'
+  setActiveTab: (tab: 'chat' | 'arena' | 'dashboard' | 'telegram' | 'events' | 'ide') => void
   selectedNodeId: string | null
   setSelectedNodeId: (id: string | null) => void
   isSidebarOpen: boolean
@@ -83,11 +84,28 @@ interface ArenaStore {
   chatInput: string
   setChatInput: (input: string) => void
 
+  // IDE State
+  ideSelectedModel: string
+  setIdeSelectedModel: (model: string) => void
+  ideUseOllama: boolean
+  setIdeUseOllama: (use: boolean) => void
+  ideMessages: ChatMessage[]
+  ideResponses: ModelResponse[]
+  addIdeMessage: (message: ChatMessage) => void
+  addIdeResponse: (response: ModelResponse) => void
+  updateIdeResponse: (id: string, updates: Partial<ModelResponse>) => void
+  clearIdeChat: () => void
+
   // Knowledge Base
   knowledgeBase: string[]
   addKnowledgeFile: (path: string) => void
   removeKnowledgeFile: (path: string) => void
   toggleNodeGlobal: (nodeId: string, isGlobal: boolean) => void
+
+  // Interactive Pipeline
+  interactivePipeline: PipelineState | null
+  setInteractivePipeline: (state: PipelineState | null) => void
+  updateInteractivePipeline: (updates: Partial<PipelineState>) => void
 }
 
 const defaultModels: Model[] = [
@@ -475,6 +493,13 @@ export const useArenaStore = create<ArenaStore>()(
     }
   },
 
+  // Interactive Pipeline
+  interactivePipeline: null,
+  setInteractivePipeline: (state) => set({ interactivePipeline: state }),
+  updateInteractivePipeline: (updates) => set((state) => ({
+    interactivePipeline: state.interactivePipeline ? { ...state.interactivePipeline, ...updates } : null,
+  })),
+
   // Chat Configuration
   chatMode: 'models',
   setChatMode: (mode) => set({ chatMode: mode }),
@@ -505,6 +530,20 @@ export const useArenaStore = create<ArenaStore>()(
   chatInput: '',
   setChatInput: (input) => set({ chatInput: input }),
 
+  // IDE State
+  ideSelectedModel: '',
+  setIdeSelectedModel: (model) => set({ ideSelectedModel: model }),
+  ideUseOllama: false,
+  setIdeUseOllama: (use) => set({ ideUseOllama: use }),
+  ideMessages: [],
+  ideResponses: [],
+  addIdeMessage: (message) => set((state) => ({ ideMessages: [...state.ideMessages, message] })),
+  addIdeResponse: (response) => set((state) => ({ ideResponses: [...state.ideResponses, response] })),
+  updateIdeResponse: (id, updates) => set((state) => ({
+    ideResponses: state.ideResponses.map((r) => r.id === id ? { ...r, ...updates } : r),
+  })),
+  clearIdeChat: () => set({ ideMessages: [], ideResponses: [] }),
+
   globalUsage: {
     totalTokens: 0,
     totalCost: 0,
@@ -533,7 +572,11 @@ export const useArenaStore = create<ArenaStore>()(
         activeConfigId: state.activeConfigId,
         chatMode: state.chatMode,
         maxSessionBudget: state.maxSessionBudget,
-        knowledgeBase: state.knowledgeBase
+        knowledgeBase: state.knowledgeBase,
+        ideSelectedModel: state.ideSelectedModel,
+        ideUseOllama: state.ideUseOllama,
+        ideMessages: state.ideMessages,
+        ideResponses: state.ideResponses
         // Note: chatInput is NOT persisted - it survives tab switching (in memory) but clears on page reload
       }),
       // After rehydration, mark any interrupted (streaming/pending) responses as error

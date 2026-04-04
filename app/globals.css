@@ -123,3 +123,63 @@
     @apply bg-background text-foreground;
   }
 }
+
+/* Custom Scrollbar Styles - Global (must be at the end to override defaults) */
+::-webkit-scrollbar {
+  width: 8px !important;
+  height: 8px !important;
+}
+
+::-webkit-scrollbar-track {
+  background: #0f0f0f !important;
+  border-radius: 4px !important;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #2a2a2a !important;
+  border-radius: 4px !important;
+  border: 1px solid #2d2d2d !important;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #4a4a4a !important;
+}
+
+::-webkit-scrollbar-corner {
+  background: #0f0f0f !important;
+}
+
+/* Firefox */
+* {
+  scrollbar-width: thin !important;
+  scrollbar-color: #2a2a2a #0f0f0f !important;
+}
+
+/* Thin scrollbars for specific elements */
+.scrollbar-thin::-webkit-scrollbar {
+  width: 6px !important;
+  height: 6px !important;
+}
+
+.scrollbar-thin::-webkit-scrollbar-thumb {
+  background: #2a2a2a !important;
+  border-radius: 3px !important;
+}
+
+.scrollbar-thin::-webkit-scrollbar-thumb:hover {
+  background: #4a4a4a !important;
+}
+
+.scrollbar-thin::-webkit-scrollbar-track {
+  background: transparent !important;
+}
+
+/* Hide scrollbar but keep functionality */
+.scrollbar-hide {
+  -ms-overflow-style: none !important;
+  scrollbar-width: none !important;
+}
+
+.scrollbar-hide::-webkit-scrollbar {
+  display: none !important;
+}
