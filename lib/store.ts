@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
-import { Model, ArenaNode, ArenaEdge, ChatMessage, ModelResponse, ArenaConfig, HistoricalChat, NodeStatus, UsageEvent } from './types'
+import { Model, ArenaNode, ArenaEdge, ChatMessage, ModelResponse, ArenaConfig, HistoricalChat, NodeStatus, UsageEvent, ArenaChatMessage, ArenaChatConfig, ArenaChatSession } from './types'
 import { getTokenCount } from './tokenizer'
 import { PipelineState } from './interactive-executor'
 
@@ -38,8 +38,8 @@ interface ArenaStore {
   deleteConfig: (id: string) => void
   
   // UI state
-  activeTab: 'chat' | 'arena' | 'dashboard' | 'telegram' | 'events' | 'ide'
-  setActiveTab: (tab: 'chat' | 'arena' | 'dashboard' | 'telegram' | 'events' | 'ide') => void
+  activeTab: 'chat' | 'arena' | 'arena-chat' | 'dashboard' | 'telegram' | 'events' | 'ide'
+  setActiveTab: (tab: 'chat' | 'arena' | 'arena-chat' | 'dashboard' | 'telegram' | 'events' | 'ide') => void
   selectedNodeId: string | null
   setSelectedNodeId: (id: string | null) => void
   isSidebarOpen: boolean
@@ -106,6 +106,17 @@ interface ArenaStore {
   interactivePipeline: PipelineState | null
   setInteractivePipeline: (state: PipelineState | null) => void
   updateInteractivePipeline: (updates: Partial<PipelineState>) => void
+
+  // Arena Multi-LLM Chat/Debate
+  arenaChatSession: ArenaChatSession | null
+  setArenaChatSession: (session: ArenaChatSession | null) => void
+  updateArenaChatSession: (updates: Partial<ArenaChatSession>) => void
+  
+  arenaChatConfig: ArenaChatConfig | null
+  setArenaChatConfig: (config: ArenaChatConfig | null) => void
+  
+  arenaChatInput: string
+  setArenaChatInput: (input: string) => void
 }
 
 const defaultModels: Model[] = [
@@ -414,7 +425,7 @@ export const useArenaStore = create<ArenaStore>()(
   }),
   clearChat: () => set({ messages: [], responses: [], currentChatId: null }),
   
-  // Arena configs
+  // Arena configs (stored in zustand persist, server-side sync via API)
   configs: [],
   activeConfigId: null,
   saveConfig: (config) => set((state) => ({
@@ -430,7 +441,7 @@ export const useArenaStore = create<ArenaStore>()(
         edges: config.edges,
         activeConfigId: id,
         chatMode: `pipeline:${id}`,
-        knowledgeBase: config.knowledgeBase || []
+        knowledgeBase: config.knowledgeBase || [],
       })
     }
   },
@@ -554,6 +565,19 @@ export const useArenaStore = create<ArenaStore>()(
   maxSessionBudget: 1.0,
   setMaxSessionBudget: (limit) => set({ maxSessionBudget: limit }),
   resetSessionCost: () => set({ sessionCost: 0 }),
+
+  // Arena Multi-LLM Chat/Debate
+  arenaChatSession: null,
+  setArenaChatSession: (session) => set({ arenaChatSession: session }),
+  updateArenaChatSession: (updates) => set((state) => ({
+    arenaChatSession: state.arenaChatSession ? { ...state.arenaChatSession, ...updates } : null,
+  })),
+  
+  arenaChatConfig: null,
+  setArenaChatConfig: (config) => set({ arenaChatConfig: config, arenaChatSession: null }),
+  
+  arenaChatInput: '',
+  setArenaChatInput: (input) => set({ arenaChatInput: input }),
 
     }),
     {

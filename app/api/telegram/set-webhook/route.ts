@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN
+const TELEGRAM_WEBHOOK_SECRET = process.env.TELEGRAM_WEBHOOK_SECRET || ''
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL
 
 export async function POST(req: NextRequest) {
@@ -15,11 +16,13 @@ export async function POST(req: NextRequest) {
   const webhookUrl = `${APP_URL}/api/telegram/webhook`
 
   try {
-    // Set webhook
-    const res = await fetch(
-      `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/setWebhook?url=${encodeURIComponent(webhookUrl)}`,
-      { method: 'POST' }
-    )
+    // Set webhook with secret token if configured
+    let setWebhookUrl = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/setWebhook?url=${encodeURIComponent(webhookUrl)}`
+    if (TELEGRAM_WEBHOOK_SECRET) {
+      setWebhookUrl += `&secret_token=${encodeURIComponent(TELEGRAM_WEBHOOK_SECRET)}`
+    }
+    
+    const res = await fetch(setWebhookUrl, { method: 'POST' })
     const data = await res.json()
 
     // Get webhook info

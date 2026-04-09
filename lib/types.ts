@@ -192,3 +192,35 @@ export interface TelegramStats {
   messagesPerHour: Array<{ hour: number; count: number }>
   errors24h: number
 }
+
+// Multi-LLM Arena Chat / Debate Types
+export interface ArenaChatMessage {
+  id: string
+  role: 'user' | 'assistant'
+  content: string
+  modelId?: string      // который ответил (для assistant)
+  modelName?: string
+  turn: number          // номер хода
+  timestamp: string
+}
+
+export interface ArenaChatConfig {
+  participantModelIds: string[]  // модели-участники
+  topic: string                  // тема обсуждения
+  systemPrompt?: string          // общий системный промпт
+  perModelSystemPrompt?: Record<string, string>  // индивидуальный промпт для каждой модели
+  maxRounds: number              // максимальное количество раундов
+  visibleMessagesPerModel: number // сколько последних сообщений каждой модели показывать в контексте
+  mode: 'debate' | 'collaboration' | 'sequential'  // режим общения
+  includeUserInLoop: boolean     // может ли пользователь вмешиваться между раундами
+}
+
+export interface ArenaChatSession {
+  id: string
+  config: ArenaChatConfig
+  messages: ArenaChatMessage[]
+  currentRound: number
+  isRunning: boolean
+  createdAt: string
+  updatedAt: string
+}

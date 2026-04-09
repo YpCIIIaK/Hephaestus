@@ -15,6 +15,8 @@ Web app for multi-model chat, configurable DAG pipelines ("Arena"), and **event 
 - **Smart Fallback Chain**: automatic fallback to backup models on timeout/error.
 - **RAG Knowledge Base**: BM25 search across indexed project files with adjacent chunk inclusion.
 - **Telegram Bot**: interact with AI via Telegram — send text, photos, documents, voice messages.
+- **Agent Constructor**: build custom multi-agent pipelines visually (OpenClaw-style).
+- **Skill System**: create reusable skills (SKILL.md format) that agents can load and use dynamically.
 
 ## Tech Stack
 
@@ -340,6 +342,63 @@ All routes live in `app/api/*`.
 - `PUT /api/knowledge/index` — index file for RAG.
 - `GET /api/knowledge/stats` — RAG index statistics.
 
+## Skill System (OpenClaw-style)
+
+Create reusable skills that agents can dynamically load and use during conversations.
+
+### Creating Skills
+
+Skills are stored in the `./skills` directory with the following structure:
+
+```
+skills/
+  my-skill/
+    SKILL.md
+```
+
+### SKILL.md Format
+
+Each skill uses YAML frontmatter + markdown body:
+
+```markdown
+---
+name: My Skill
+description: What this skill does
+category: optional-category
+---
+
+## What is this skill?
+
+Detailed description of the skill's purpose and capabilities.
+
+## How to use
+
+Step-by-step instructions for using the skill.
+
+## Examples
+
+\`\`\`
+Example usage here
+\`\`\`
+```
+
+### Using Skills in Chat
+
+Skills are automatically discovered and exposed as tools to the AI. The agent can call:
+
+```
+skill(skill_name="my-skill")
+```
+
+This loads the skill content and provides it to the agent for use in the conversation.
+
+### Skill Manager UI
+
+Access the Skill Manager through the Agent Constructor to:
+- Create new skills with a visual editor
+- View and manage existing skills
+- Organize skills by category
+
 ## AI File Editing & Tools
 
 AI in chat can use tools:
@@ -350,6 +409,7 @@ AI in chat can use tools:
 - `edit_file` — edit (str_replace).
 - `delete_file` — delete file.
 - `web_search` — web search.
+- `skill` — load and use a skill by name.
 
 ### Multi-step Tool Chains
 

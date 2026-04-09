@@ -6,19 +6,15 @@ import {
   MessageSquare, 
   Swords, 
   Settings, 
-  Zap,
   ChevronLeft,
   ChevronDown,
   ChevronRight,
   Sparkles,
   BarChart3,
-  Coins,
   RotateCcw,
-  ShieldCheck,
   AlertTriangle,
-  Send,
   Globe,
-  Code
+  Users
 } from 'lucide-react'
 import { Progress } from '@/components/ui/progress'
 import { Input } from '@/components/ui/input'
@@ -50,7 +46,7 @@ export function Sidebar({ isMobile }: { isMobile?: boolean }) {
   const budgetPercentage = Math.min((sessionCost / maxSessionBudget) * 100, 100)
   const isBudgetCritical = sessionCost >= maxSessionBudget * 0.9
 
-  const handleNav = (tab: 'chat' | 'arena' | 'dashboard' | 'telegram' | 'events' | 'ide') => {
+  const handleNav = (tab: 'chat' | 'arena' | 'arena-chat' | 'dashboard' | 'events') => {
     setActiveTab(tab)
     if (isMobile) {
       setSidebarOpen(false)
@@ -59,11 +55,10 @@ export function Sidebar({ isMobile }: { isMobile?: boolean }) {
 
   const navItems = [
     { id: 'chat' as const, label: 'Chat', icon: MessageSquare, description: 'Multi-model chat' },
-    { id: 'ide' as const, label: 'IDE', icon: Code, description: 'Chat with file explorer' },
     { id: 'arena' as const, label: 'Arena', icon: Swords, description: 'Model orchestration' },
+    { id: 'arena-chat' as const, label: 'AI Дебаты', icon: Users, description: 'Multi-LLM debate' },
     { id: 'events' as const, label: 'Events', icon: Globe, description: 'Event simulation' },
     { id: 'dashboard' as const, label: 'Analytics', icon: BarChart3, description: 'Usage & cost' },
-    { id: 'telegram' as const, label: 'Telegram', icon: Send, description: 'Bot management' },
   ]
 
   return (

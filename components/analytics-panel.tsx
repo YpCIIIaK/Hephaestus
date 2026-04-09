@@ -20,10 +20,11 @@ import {
 import { 
   Activity, Zap, Clock, TrendingUp, Coins, 
   BarChart3, Sparkles, Calendar, Layers, AlertTriangle,
-  Download, FileText, Table2
+  Download, FileText, Table2, Bot
 } from 'lucide-react'
 import { useMemo } from 'react'
 import { WaterfallGantt } from '@/components/waterfall-gantt'
+import { TelegramAnalytics } from '@/components/telegram-analytics'
 import { Button } from '@/components/ui/button'
 import { downloadCSV, downloadPDF } from '@/lib/export-utils'
 import { Badge } from '@/components/ui/badge'
@@ -423,6 +424,7 @@ export function AnalyticsPanel() {
               <TabsTrigger value="daily" className="gap-2"><Calendar className="w-4 h-4" /> Daily History</TabsTrigger>
               <TabsTrigger value="models" className="gap-2"><Layers className="w-4 h-4" /> Model Breakdown</TabsTrigger>
               <TabsTrigger value="waterfall" className="gap-2"><Clock className="w-4 h-4" /> Waterfall</TabsTrigger>
+              <TabsTrigger value="telegram" className="gap-2"><Bot className="w-4 h-4" /> Telegram</TabsTrigger>
             </TabsList>
 
             {/* OVERVIEW TAB */}
@@ -860,6 +862,11 @@ export function AnalyticsPanel() {
             {/* WATERFALL TAB */}
             <TabsContent value="waterfall" className="space-y-6">
               <WaterfallHistory responses={responses} historicalChats={historicalChats} messages={messages} />
+            </TabsContent>
+
+            {/* TELEGRAM TAB */}
+            <TabsContent value="telegram">
+              <TelegramAnalytics />
             </TabsContent>
           </Tabs>
       </div>

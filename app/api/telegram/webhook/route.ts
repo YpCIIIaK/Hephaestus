@@ -15,6 +15,7 @@ import { addUser, addMessage } from '@/lib/telegram-store'
 
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN
 const TELEGRAM_API_URL = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}`
+const TELEGRAM_WEBHOOK_SECRET = process.env.TELEGRAM_WEBHOOK_SECRET || ''
 
 // Хранилище сессий (в памяти, для production использовать Redis/DB)
 interface TelegramSession {
@@ -30,8 +31,35 @@ interface TelegramSession {
 
 const sessions = new Map<number, TelegramSession>()
 
+// Rate limiting: track last message time per user
+const rateLimits = new Map<number, number>()
+const RATE_LIMIT_MS = 1000 // 1 second between messages
+
 // Session timeout: 30 minutes
 const SESSION_TIMEOUT = 30 * 60 * 1000
+
+// Check rate limit for user
+function checkRateLimit(userId: number): boolean {
+  const now = Date.now()
+  const lastMessage = rateLimits.get(userId)
+  
+  if (lastMessage && now - lastMessage < RATE_LIMIT_MS) {
+    return false // Rate limited
+  }
+  
+  rateLimits.set(userId, now)
+  return true
+}
+
+// Clean up old rate limit entries
+setInterval(() => {
+  const now = Date.now()
+  for (const [userId, timestamp] of rateLimits.entries()) {
+    if (now - timestamp > 60 * 1000) { // Clean entries older than 1 minute
+      rateLimits.delete(userId)
+    }
+  }
+}, 30 * 1000)
 
 function getSession(userId: number): TelegramSession {
   const existing = sessions.get(userId)
@@ -156,7 +184,7 @@ async function downloadTelegramFile(fileId: string): Promise<Buffer> {
 
 // ==================== AI PROCESSING ====================
 
-async function processWithAI(message: string, session: TelegramSession): Promise<string> {
+async function processWithAI(message: string, session: TelegramSession): Promise<{ text: string, tokens?: number, cost?: number }> {
   // Добавить в историю
   session.messageHistory.push({
     role: 'user',
@@ -201,11 +229,33 @@ async function processWithAI(message: string, session: TelegramSession): Promise
 
     const decoder = new TextDecoder()
     let fullText = ''
+    let tokens = 0
+    let cost = 0
 
     while (true) {
       const { done, value } = await reader.read()
       if (done) break
-      fullText += decoder.decode(value, { stream: true })
+      const chunk = decoder.decode(value, { stream: true })
+      fullText += chunk
+      
+      // Try to extract usage info from [USAGE:...] marker
+      const usageMatch = chunk.match(/\[USAGE:\{.*?\}\]/)
+      if (usageMatch) {
+        try {
+          const usage = JSON.parse(usageMatch[0].replace('[USAGE:', '').replace(']', ''))
+          tokens = usage.total_tokens || usage.completion_tokens || 0
+          cost = usage.cost || 0
+        } catch {}
+      }
+    }
+
+    // Clean up usage markers from text
+    fullText = fullText.replace(/\[USAGE:\{.*?\}\]/g, '').trim()
+
+    // Estimate tokens if not provided
+    if (!tokens) {
+      tokens = Math.ceil(fullText.length / 4)
+      cost = (tokens / 1000) * 0.00025 // Approximate cost for free model
     }
 
     // Добавить ответ в историю
@@ -215,18 +265,18 @@ async function processWithAI(message: string, session: TelegramSession): Promise
       timestamp: Date.now(),
     })
 
-    return fullText
+    return { text: fullText, tokens, cost }
   } catch (error: any) {
     console.error('[AI] Processing error:', error)
-    return `⚠️ Error: ${error.message}`
+    return { text: `⚠️ Error: ${error.message}`, tokens: 0, cost: 0 }
   }
 }
 
 // ==================== PIPELINE PROCESSING ====================
 
-async function processWithPipeline(message: string, session: TelegramSession): Promise<string> {
+async function processWithPipeline(message: string, session: TelegramSession): Promise<{ text: string, tokens?: number, cost?: number }> {
   if (!session.currentPipelineId) {
-    return '⚠️ Pipeline not set. Use /pipeline to configure.'
+    return { text: '⚠️ Pipeline not set. Use /pipeline to configure.', tokens: 0, cost: 0 }
   }
 
   // Здесь можно интегрировать interactive-executor
@@ -342,6 +392,32 @@ async function handleSetPipeline(chatId: number, session: TelegramSession, pipel
   await sendTelegramMessage(chatId, `✅ Pipeline set to: \`${pipelineId}\`\nPipeline mode enabled.`)
 }
 
+async function handleListPipelines(chatId: number) {
+  try {
+    const baseUrl = process.env.NODE_ENV === 'production' 
+      ? process.env.NEXT_PUBLIC_APP_URL 
+      : 'http://localhost:3000'
+    
+    const res = await fetch(`${baseUrl}/api/configs`)
+    const data = await res.json()
+    
+    if (!data.configs || data.configs.length === 0) {
+      await sendTelegramMessage(chatId, '📋 No pipelines found.\n\nCreate pipelines on the website in Arena section first.')
+      return
+    }
+    
+    let text = '📋 *Available Pipelines*\n\n'
+    for (const config of data.configs) {
+      text += `🔹 *${config.name}*\n   ID: \`${config.id}\`\n   Desc: ${config.description || 'N/A'}\n   Nodes: ${config.nodeCount}\n\n`
+    }
+    text += '💡 Use /setpipeline <id> to select'
+    
+    await sendTelegramMessage(chatId, text)
+  } catch (error: any) {
+    await sendTelegramMessage(chatId, `❌ Error fetching pipelines: ${error.message}`)
+  }
+}
+
 // ==================== MESSAGE HANDLERS ====================
 
 async function handleTextMessage(chatId: number, userId: number, text: string) {
@@ -364,6 +440,8 @@ async function handleTextMessage(chatId: number, userId: number, text: string) {
         return handlePipelineToggle(chatId, session)
       case '/setpipeline':
         return handleSetPipeline(chatId, session, args.join(' ').trim())
+      case '/pipelines':
+        return handleListPipelines(chatId)
       default:
         return sendTelegramMessage(chatId, `❓ Unknown command: ${command}\nUse /help for available commands.`)
     }
@@ -372,9 +450,23 @@ async function handleTextMessage(chatId: number, userId: number, text: string) {
   // Process with AI
   sendTelegramAction(chatId, 'typing')
 
-  const response = session.pipelineMode
+  const result = session.pipelineMode
     ? await processWithPipeline(text, session)
     : await processWithAI(text, session)
+
+  const response = typeof result === 'string' ? result : result.text
+  const tokens = typeof result === 'object' ? (result.tokens || 0) : 0
+  const cost = typeof result === 'object' ? (result.cost || 0) : 0
+
+  // Update message with token/cost info
+  await addMessage({
+    userId,
+    type: text.startsWith('/') ? 'command' : 'text',
+    timestamp: new Date().toISOString(),
+    tokens,
+    cost,
+    status: 'success',
+  })
 
   // Split long messages (Telegram limit: 4096 chars)
   const chunks = splitMessage(response, 4000)
@@ -477,7 +569,8 @@ async function handleDocumentMessage(chatId: number, userId: number, document: a
       ? `Analyze this document "${fileName}". User note: "${caption}"\n\nContent:\n${truncatedContent}`
       : `Analyze this document "${fileName}":\n\n${truncatedContent}`
 
-    const response = await processWithAI(prompt, session)
+    const result = await processWithAI(prompt, session)
+    const response = typeof result === 'string' ? result : result.text
 
     const chunks = splitMessage(response, 4000)
     for (const chunk of chunks) {
@@ -542,6 +635,18 @@ export async function POST(req: Request) {
     })
   }
 
+  // Validate webhook secret if configured
+  if (TELEGRAM_WEBHOOK_SECRET) {
+    const secretHeader = req.headers.get('x-telegram-bot-api-secret-token')
+    if (secretHeader !== TELEGRAM_WEBHOOK_SECRET) {
+      console.warn('[Telegram Webhook] Invalid secret token')
+      return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+        status: 401,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    }
+  }
+
   try {
     const body = await req.text()
     console.log('[Telegram Webhook] Raw body:', body)
@@ -558,6 +663,14 @@ export async function POST(req: Request) {
 
       // Add/update user in store
       await addUser({ id: userId, firstName, username })
+
+      // Check rate limit
+      if (!checkRateLimit(userId)) {
+        console.log('[Telegram Webhook] Rate limited user:', userId)
+        return new Response(JSON.stringify({ ok: true }), {
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }
 
       // Initialize session
       const session = getSession(userId)
