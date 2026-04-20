@@ -38,8 +38,8 @@ interface ArenaStore {
   deleteConfig: (id: string) => void
   
   // UI state
-  activeTab: 'chat' | 'arena' | 'arena-chat' | 'dashboard' | 'telegram' | 'events' | 'ide'
-  setActiveTab: (tab: 'chat' | 'arena' | 'arena-chat' | 'dashboard' | 'telegram' | 'events' | 'ide') => void
+  activeTab: 'chat' | 'arena' | 'arena-chat' | 'agents' | 'dashboard' | 'telegram' | 'events' | 'ide'
+  setActiveTab: (tab: 'chat' | 'arena' | 'arena-chat' | 'agents' | 'dashboard' | 'telegram' | 'events' | 'ide') => void
   selectedNodeId: string | null
   setSelectedNodeId: (id: string | null) => void
   isSidebarOpen: boolean

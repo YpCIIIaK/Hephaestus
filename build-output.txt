@@ -1,0 +1,90 @@
+
+> my-project@0.1.0 build D:\Aggregator
+> next build
+
+тЦ▓ Next.js 16.2.0 (Turbopack)
+- Environments: .env
+
+  Creating an optimized production build ...
+Turbopack build encountered 1 warnings:
+./next.config.mjs
+Encountered unexpected file in NFT list
+A file was traced that indicates that the whole project was traced unintentionally. Somewhere in the import trace below, there are:
+- filesystem operations (like path.join, path.resolve or fs.readFile), or
+- very dynamic requires (like require('./' + foo)).
+To resolve this, you can
+- remove them if possible, or
+- only use them in development, or
+- make sure they are statically scoped to some subfolder: path.join(process.cwd(), 'data', bar), or
+- add ignore comments: path.join(/*turbopackIgnore: true*/ process.cwd(), bar)
+
+Import trace:
+  App Route:
+    ./next.config.mjs
+    ./app/api/rag/index/route.ts
+
+
+тЬУ Compiled successfully in 34.4s
+  Skipping validation of types
+  Finished TypeScript config validation in 54ms ...
+  Collecting page data using 11 workers ...
+[ToolSkill] Registered: rapidapi-weather -> http_request
+[ToolSkill] Registered: rapidapi-currency -> http_request
+[ToolSkill] Registered: rapidapi-domain -> http_request
+[ToolSkill] Registered: rapidapi-shorturl -> http_request
+[ToolSkill] Registered: rapidapi-qrcode -> http_request
+[ToolSkill] Registered: rapidapi-translate -> http_request
+[ToolSkill] Registered: webhook-slack -> http_request
+[ToolSkill] Registered: webhook-discord -> http_request
+[Skills] Discovered 100 skills
+  Generating static pages using 11 workers (0/28) ...
+  Generating static pages using 11 workers (7/28) 
+[ToolSkill] Registered: rapidapi-weather -> http_request
+[ToolSkill] Registered: rapidapi-currency -> http_request
+[ToolSkill] Registered: rapidapi-domain -> http_request
+[ToolSkill] Registered: rapidapi-shorturl -> http_request
+[ToolSkill] Registered: rapidapi-qrcode -> http_request
+[ToolSkill] Registered: rapidapi-translate -> http_request
+[ToolSkill] Registered: webhook-slack -> http_request
+[ToolSkill] Registered: webhook-discord -> http_request
+[Skills] Discovered 100 skills
+  Generating static pages using 11 workers (14/28) 
+  Generating static pages using 11 workers (21/28) 
+тЬУ Generating static pages using 11 workers (28/28) in 1317ms
+  Finalizing page optimization ...
+
+Route (app)
+тФМ тЧЛ /
+тФЬ тЧЛ /_not-found
+тФЬ ╞Т /api/actions
+тФЬ ╞Т /api/agent-pipelines
+тФЬ ╞Т /api/arena-chat
+тФЬ ╞Т /api/chains
+тФЬ ╞Т /api/chains/[id]
+тФЬ ╞Т /api/chat
+тФЬ ╞Т /api/configs
+тФЬ ╞Т /api/events/simulate
+тФЬ ╞Т /api/files
+тФЬ ╞Т /api/files/edit
+тФЬ ╞Т /api/files/read-lines
+тФЬ ╞Т /api/health
+тФЬ ╞Т /api/ide-chat
+тФЬ ╞Т /api/knowledge/search
+тФЬ ╞Т /api/models
+тФЬ ╞Т /api/pipeline/step
+тФЬ ╞Т /api/rag/index
+тФЬ ╞Т /api/rag/search
+тФЬ ╞Т /api/search
+тФЬ ╞Т /api/search-multi
+тФЬ ╞Т /api/skills
+тФЬ ╞Т /api/telegram/set-webhook
+тФЬ ╞Т /api/telegram/stats
+тФЬ ╞Т /api/telegram/webhook
+тФЬ ╞Т /api/triggers
+тФЬ ╞Т /api/upload
+тФФ ╞Т /api/webhook/[path]
+
+
+тЧЛ  (Static)   prerendered as static content
+╞Т  (Dynamic)  server-rendered on demand
+

@@ -109,15 +109,31 @@ export async function POST(req: Request) {
   }
 }
 
-/** DELETE all skills (for cleanup) */
-export async function DELETE() {
+/** DELETE a specific skill by ID */
+export async function DELETE(req: Request) {
   try {
-    if (fs.existsSync(SKILLS_DIR)) {
-      fs.rmSync(SKILLS_DIR, { recursive: true });
+    const { searchParams } = new URL(req.url);
+    const id = searchParams.get('id');
+
+    if (!id) {
+      // If no id provided, delete all skills (for cleanup)
+      if (fs.existsSync(SKILLS_DIR)) {
+        fs.rmSync(SKILLS_DIR, { recursive: true });
+      }
+      return NextResponse.json({ success: true, message: 'All skills deleted' });
     }
-    return NextResponse.json({ success: true, message: 'All skills deleted' });
+
+    const skillDir = path.join(SKILLS_DIR, id);
+    
+    if (!fs.existsSync(skillDir)) {
+      return NextResponse.json({ error: `Skill '${id}' not found` }, { status: 404 });
+    }
+
+    fs.rmSync(skillDir, { recursive: true });
+    
+    return NextResponse.json({ success: true, message: `Skill '${id}' deleted` });
   } catch (error) {
-    console.error('Error deleting skills:', error);
-    return NextResponse.json({ error: 'Failed to delete skills' }, { status: 500 });
+    console.error('Error deleting skill:', error);
+    return NextResponse.json({ error: 'Failed to delete skill' }, { status: 500 });
   }
 }

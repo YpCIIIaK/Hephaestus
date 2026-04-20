@@ -8,6 +8,7 @@ import { TelegramPanel } from '@/components/telegram-panel'
 import { EventSimulator } from '@/components/event-simulator'
 import { IDEChatPanel } from '@/components/ide-chat-panel'
 import { ArenaChatPanel } from '@/components/arena-chat-panel'
+import { AgentsPanel } from '@/components/agents-panel'
 import { useArenaStore } from '@/lib/store'
 import { Menu, Sparkles } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -59,6 +60,7 @@ export default function Home() {
         {activeTab === 'ide' && <IDEChatPanel />}
         {activeTab === 'arena' && <ArenaPanel />}
         {activeTab === 'arena-chat' && <ArenaChatPanel />}
+        {activeTab === 'agents' && <AgentsPanel />}
         {activeTab === 'dashboard' && <AnalyticsPanel />}
         {activeTab === 'telegram' && <TelegramPanel />}
         {activeTab === 'events' && <EventSimulator />}

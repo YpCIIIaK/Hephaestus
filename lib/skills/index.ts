@@ -2,6 +2,8 @@
 export * from './types';
 export * from './loader';
 export * from './tool';
+export * from './tool-skill';
+export * from './tool-skills-examples';
 
 // Singleton skill loader instance
 import { SkillLoader } from './loader';

@@ -27,8 +27,11 @@ export interface SkillFile {
 
 export function parseSkillFile(content: string): SkillFile | null {
   try {
+    // Normalize line endings to handle both CRLF and LF
+    const normalizedContent = content.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+    
     // Check for YAML frontmatter
-    const match = content.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/);
+    const match = normalizedContent.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/);
     if (!match) return null;
 
     const frontmatter = match[1];

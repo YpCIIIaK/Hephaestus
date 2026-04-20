@@ -14,7 +14,9 @@ import {
   RotateCcw,
   AlertTriangle,
   Globe,
-  Users
+  Users,
+  Bot,
+  Puzzle
 } from 'lucide-react'
 import { Progress } from '@/components/ui/progress'
 import { Input } from '@/components/ui/input'
@@ -46,7 +48,7 @@ export function Sidebar({ isMobile }: { isMobile?: boolean }) {
   const budgetPercentage = Math.min((sessionCost / maxSessionBudget) * 100, 100)
   const isBudgetCritical = sessionCost >= maxSessionBudget * 0.9
 
-  const handleNav = (tab: 'chat' | 'arena' | 'arena-chat' | 'dashboard' | 'events') => {
+  const handleNav = (tab: 'chat' | 'arena' | 'arena-chat' | 'agents' | 'dashboard' | 'events') => {
     setActiveTab(tab)
     if (isMobile) {
       setSidebarOpen(false)
@@ -57,6 +59,7 @@ export function Sidebar({ isMobile }: { isMobile?: boolean }) {
     { id: 'chat' as const, label: 'Chat', icon: MessageSquare, description: 'Multi-model chat' },
     { id: 'arena' as const, label: 'Arena', icon: Swords, description: 'Model orchestration' },
     { id: 'arena-chat' as const, label: 'AI Дебаты', icon: Users, description: 'Multi-LLM debate' },
+    { id: 'agents' as const, label: 'Agents', icon: Bot, description: 'Agent Constructor & Skills' },
     { id: 'events' as const, label: 'Events', icon: Globe, description: 'Event simulation' },
     { id: 'dashboard' as const, label: 'Analytics', icon: BarChart3, description: 'Usage & cost' },
   ]
