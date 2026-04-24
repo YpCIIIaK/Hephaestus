@@ -84,6 +84,14 @@ interface ArenaStore {
   chatInput: string
   setChatInput: (input: string) => void
 
+  // Chat Memory Settings
+  chatMemoryEnabled: boolean
+  setChatMemoryEnabled: (enabled: boolean) => void
+  chatMaxContextTokens: number
+  setChatMaxContextTokens: (tokens: number) => void
+  chatContextCompression: boolean
+  setChatContextCompression: (enabled: boolean) => void
+
   // IDE State
   ideSelectedModel: string
   setIdeSelectedModel: (model: string) => void
@@ -117,6 +125,16 @@ interface ArenaStore {
   
   arenaChatInput: string
   setArenaChatInput: (input: string) => void
+
+  // Arena setup state (persisted across tab switches)
+  arenaChatSetup: {
+    topic: string
+    selectedParticipants: import('@/lib/types').DebateModel[]
+    maxRounds: number
+    mode: 'debate' | 'collaboration' | 'sequential'
+    contextMode: 'full' | 'last_round' | 'topic_only'
+  }
+  setArenaChatSetup: (setup: Partial<{ topic: string; selectedParticipants: import('@/lib/types').DebateModel[]; maxRounds: number; mode: 'debate' | 'collaboration' | 'sequential'; contextMode: 'full' | 'last_round' | 'topic_only' }>) => void
 }
 
 const defaultModels: Model[] = [
@@ -515,6 +533,14 @@ export const useArenaStore = create<ArenaStore>()(
   chatMode: 'models',
   setChatMode: (mode) => set({ chatMode: mode }),
 
+  // Chat Memory Settings
+  chatMemoryEnabled: true,
+  setChatMemoryEnabled: (enabled) => set({ chatMemoryEnabled: enabled }),
+  chatMaxContextTokens: 8000,
+  setChatMaxContextTokens: (tokens) => set({ chatMaxContextTokens: tokens }),
+  chatContextCompression: true,
+  setChatContextCompression: (enabled) => set({ chatContextCompression: enabled }),
+
   // Execution Control
   activeAbortController: null,
   setAbortController: (ac) => set({ activeAbortController: ac }),
@@ -574,10 +600,33 @@ export const useArenaStore = create<ArenaStore>()(
   })),
   
   arenaChatConfig: null,
-  setArenaChatConfig: (config) => set({ arenaChatConfig: config, arenaChatSession: null }),
+  setArenaChatConfig: (config) => set({ 
+    arenaChatConfig: config, 
+    arenaChatSession: config ? {
+      id: `arena-${Date.now()}`,
+      config,
+      messages: [],
+      perModelHistory: {},
+      currentRound: 0,
+      isRunning: false,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    } : null 
+  }),
   
   arenaChatInput: '',
   setArenaChatInput: (input) => set({ arenaChatInput: input }),
+
+  arenaChatSetup: {
+    topic: '',
+    selectedParticipants: [],
+    maxRounds: 3,
+    mode: 'debate',
+    contextMode: 'full',
+  },
+  setArenaChatSetup: (setup) => set((state) => ({
+    arenaChatSetup: { ...state.arenaChatSetup, ...setup },
+  })),
 
     }),
     {
@@ -600,7 +649,8 @@ export const useArenaStore = create<ArenaStore>()(
         ideSelectedModel: state.ideSelectedModel,
         ideUseOllama: state.ideUseOllama,
         ideMessages: state.ideMessages,
-        ideResponses: state.ideResponses
+        ideResponses: state.ideResponses,
+        arenaChatSetup: state.arenaChatSetup
         // Note: chatInput is NOT persisted - it survives tab switching (in memory) but clears on page reload
       }),
       // After rehydration, mark any interrupted (streaming/pending) responses as error

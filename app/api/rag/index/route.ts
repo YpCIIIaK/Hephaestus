@@ -4,8 +4,8 @@ import path from 'path'
 import { splitText, estimateTokens } from '@/lib/text-splitter'
 import { getVectorStore } from '@/lib/simple-vector-store'
 
-const CHUNK_SIZE = 1500
-const CHUNK_OVERLAP = 150
+const CHUNK_SIZE = 300
+const CHUNK_OVERLAP = 50
 
 export async function POST(req: NextRequest) {
   try {

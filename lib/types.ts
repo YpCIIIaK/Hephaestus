@@ -196,7 +196,7 @@ export interface TelegramStats {
 // Multi-LLM Arena Chat / Debate Types
 export interface ArenaChatMessage {
   id: string
-  role: 'user' | 'assistant'
+  role: 'user' | 'assistant' | 'system'
   content: string
   modelId?: string      // который ответил (для assistant)
   modelName?: string
@@ -204,8 +204,17 @@ export interface ArenaChatMessage {
   timestamp: string
 }
 
+export interface DebateModel {
+  id: string
+  name: string
+  provider?: string
+  temperature?: number
+  maxTokens?: number
+  custom?: boolean      // добавлена пользователем вручную
+}
+
 export interface ArenaChatConfig {
-  participantModelIds: string[]  // модели-участники
+  participants: DebateModel[]    // модели-участники с полной информацией
   topic: string                  // тема обсуждения
   systemPrompt?: string          // общий системный промпт
   perModelSystemPrompt?: Record<string, string>  // индивидуальный промпт для каждой модели
@@ -213,12 +222,14 @@ export interface ArenaChatConfig {
   visibleMessagesPerModel: number // сколько последних сообщений каждой модели показывать в контексте
   mode: 'debate' | 'collaboration' | 'sequential'  // режим общения
   includeUserInLoop: boolean     // может ли пользователь вмешиваться между раундами
+  contextMode: 'full' | 'last_round' | 'topic_only' // какой контекст видят модели
 }
 
 export interface ArenaChatSession {
   id: string
   config: ArenaChatConfig
   messages: ArenaChatMessage[]
+  perModelHistory: Record<string, ArenaChatMessage[]>  // история диалога для каждой модели отдельно
   currentRound: number
   isRunning: boolean
   createdAt: string

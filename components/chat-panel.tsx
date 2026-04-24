@@ -132,6 +132,11 @@ export function ChatPanel() {
   const scrollRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
+  // Memory settings
+  const chatMemoryEnabled = useArenaStore(state => state.chatMemoryEnabled)
+  const chatMaxContextTokens = useArenaStore(state => state.chatMaxContextTokens)
+  const chatContextCompression = useArenaStore(state => state.chatContextCompression)
+
   const enabledModels = useMemo(() => models.filter(m => m.enabled && m.level === 1), [models])
 
   const handleFileUpload = async (files: FileList | File[]) => {
@@ -211,14 +216,56 @@ export function ChatPanel() {
   const handleSubmit = async (overrideInput?: string) => {
     const textToSubmit = overrideInput || chatInput
     
-    // Build context from attached files
-    const filesContext = attachedFiles
-      .filter(f => f.text && !f.isProcessing)
-      .map(f => `--- FILE: ${f.name} (${formatFileSize(f.size)}) ---\n${f.text}`)
-      .join('\n\n')
+    // Build context from attached files using RAG
+    let filesContext = ''
+    if (attachedFiles.length > 0) {
+      try {
+        // Index files for RAG
+        const fileTexts = attachedFiles
+          .filter(f => f.text && !f.isProcessing)
+          .map(f => ({ path: f.name, content: f.text }))
+        
+        if (fileTexts.length > 0) {
+          await fetch('/api/rag/index', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ 
+              documents: fileTexts,
+              source: 'chat-attachment'
+            }),
+          })
+          
+          // Search relevant chunks
+          const searchRes = await fetch('/api/rag/search', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ 
+              query: textToSubmit.trim(), 
+              topK: 5,
+              source: 'chat-attachment'
+            }),
+          })
+          
+          const searchData = await searchRes.json()
+          if (searchData.results && searchData.results.length > 0) {
+            filesContext = `\n\n--- Relevant Context from Attached Files (RAG) ---\n`
+            for (const result of searchData.results) {
+              filesContext += `\n### ${result.source} (lines ${result.startLine}-${result.endLine})\n\`\`\`\n${result.text}\n\`\`\`\n`
+            }
+          }
+        }
+      } catch (e) {
+        console.error('RAG failed, falling back to full files:', e)
+        // Fallback: use full file content
+        filesContext = '\n\n--- ATTACHED FILES CONTEXT ---\n' + attachedFiles
+          .filter(f => f.text && !f.isProcessing)
+          .map(f => `--- FILE: ${f.name} (${formatFileSize(f.size)}) ---\n${f.text}`)
+          .join('\n\n')
+      }
+    }
     
     const fullInput = filesContext 
-      ? `${textToSubmit}\n\n--- ATTACHED FILES CONTEXT ---\n${filesContext}` 
+      ? `${textToSubmit}${filesContext}` 
       : textToSubmit
     
     if (!textToSubmit.trim() && attachedFiles.length === 0) return
@@ -327,7 +374,13 @@ export function ChatPanel() {
     setAbortController(abortController)
 
     try {
-      const { results } = await executePipeline(config.nodes, config.edges, userPrompt, (nodeId, status, nodeResult, tokens, latencyMs, promptTokens, completionTokens, promptCost, completionCost, startTime, endTime) => {
+      // Build conversation context with memory for pipeline
+      const conversationMessages = buildConversationMessages(userPrompt)
+      const promptWithContext = conversationMessages.length > 1
+        ? `Previous conversation:\n${conversationMessages.slice(0, -1).map(m => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content}`).join('\n\n')}\n\nCurrent request:\n${userPrompt}`
+        : userPrompt
+
+      const { results } = await executePipeline(config.nodes, config.edges, promptWithContext, (nodeId, status, nodeResult, tokens, latencyMs, promptTokens, completionTokens, promptCost, completionCost, startTime, endTime) => {
         const currentResp = useArenaStore.getState().responses.find(r => r.id === runId)
         if (!currentResp) return
 
@@ -393,21 +446,74 @@ export function ChatPanel() {
     }
   }
 
+  // Build conversation messages with memory/context support
+  const buildConversationMessages = useCallback((currentPrompt: string): { role: string; content: string }[] => {
+    if (!chatMemoryEnabled) {
+      return [{ role: 'user', content: currentPrompt }]
+    }
+
+    const msgs: { role: string; content: string }[] = []
+    let estimatedTokens = Math.ceil(currentPrompt.length / 4)
+
+    // Add previous messages (newest first, then reverse)
+    const reversedMessages = [...messages].reverse()
+    const reversedResponses = [...responses].reverse()
+
+    for (let i = 0; i < reversedMessages.length && i < 20; i++) {
+      const msg = reversedMessages[i]
+      const response = reversedResponses.find(r => r.messageId === msg.id && r.status === 'complete')
+
+      const msgTokens = Math.ceil(msg.content.length / 4)
+      const responseTokens = response ? Math.ceil((response.content?.length || 0) / 4) : 0
+      const totalTokens = msgTokens + responseTokens
+
+      // Check if adding this would exceed limit
+      if (estimatedTokens + totalTokens > chatMaxContextTokens) {
+        if (chatContextCompression && msgs.length > 0) {
+          // Add summary marker instead of full message
+          msgs.unshift({
+            role: 'system',
+            content: `[Earlier conversation summarized: ${msgs.length} previous exchanges]`
+          })
+        }
+        break
+      }
+
+      estimatedTokens += totalTokens
+
+      // Add assistant response first (since we're iterating in reverse)
+      if (response?.content) {
+        msgs.unshift({ role: 'assistant', content: response.content })
+      }
+      // Then add user message
+      msgs.unshift({ role: 'user', content: msg.content })
+    }
+
+    // Add current prompt at the end
+    msgs.push({ role: 'user', content: currentPrompt })
+
+    return msgs
+  }, [chatMemoryEnabled, chatMaxContextTokens, chatContextCompression, messages, responses])
+
   const simulateModelResponse = useCallback(async (respId: string, modelId: string, prompt: string) => {
     updateResponse(respId, { status: 'streaming' })
     const abortController = new AbortController()
     setAbortController(abortController)
-    
+
     try {
       const startTime = Date.now()
       const model = useArenaStore.getState().models.find(m => m.id === modelId)
+
+      // Build conversation with memory
+      const conversationMessages = buildConversationMessages(prompt)
+
       const res = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         signal: abortController.signal,
         body: JSON.stringify({
           modelId,
-          messages: [{ role: 'user', content: prompt }],
+          messages: conversationMessages,
           webSearch: model?.webSearch
         })
       })

@@ -1,11 +1,13 @@
 'use client'
 
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useCallback } from 'react'
 import { useArenaStore } from '@/lib/store'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
+import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
   MessageSquare,
   Users,
@@ -18,16 +20,22 @@ import {
   ChevronUp,
   StopCircle,
   Play,
+  Plus,
+  Trash2,
+  Brain,
+  Eye,
+  History,
+  Check,
+  X,
+  Settings2,
 } from 'lucide-react'
-import { ArenaChatMessage, ArenaChatConfig } from '@/lib/types'
+import { ArenaChatMessage, ArenaChatConfig, DebateModel } from '@/lib/types'
 import { MarkdownRenderer } from '@/components/markdown-renderer'
 
-// Helper for class names
 function cn(...inputs: (string | undefined | false | null)[]) {
   return inputs.filter(Boolean).join(' ')
 }
 
-// Provider icons
 const providerIcons: Record<string, string> = {
   openai: '◆',
   anthropic: '◇',
@@ -37,20 +45,34 @@ const providerIcons: Record<string, string> = {
   custom: '○',
 }
 
-// Provider colors
 const providerColors: Record<string, string> = {
-  openai: 'border-emerald-500/30',
-  anthropic: 'border-orange-500/30',
-  google: 'border-blue-500/30',
-  meta: 'border-indigo-500/30',
-  mistral: 'border-cyan-500/30',
-  custom: 'border-zinc-500/30',
+  openai: 'border-emerald-500/30 bg-emerald-500/5',
+  anthropic: 'border-orange-500/30 bg-orange-500/5',
+  google: 'border-blue-500/30 bg-blue-500/5',
+  meta: 'border-indigo-500/30 bg-indigo-500/5',
+  mistral: 'border-cyan-500/30 bg-cyan-500/5',
+  custom: 'border-zinc-500/30 bg-zinc-500/5',
 }
 
-const modeLabels = {
-  debate: '🎤 Дебаты',
-  collaboration: '🤝 Совместная работа',
-  sequential: '📋 Последовательно',
+const providerBadgeColors: Record<string, string> = {
+  openai: 'bg-emerald-500/10 text-emerald-600 border-emerald-200',
+  anthropic: 'bg-orange-500/10 text-orange-600 border-orange-200',
+  google: 'bg-blue-500/10 text-blue-600 border-blue-200',
+  meta: 'bg-indigo-500/10 text-indigo-600 border-indigo-200',
+  mistral: 'bg-cyan-500/10 text-cyan-600 border-cyan-200',
+  custom: 'bg-zinc-500/10 text-zinc-600 border-zinc-200',
+}
+
+const modeLabels: Record<string, { label: string; desc: string; icon: string }> = {
+  debate: { label: 'Дебаты', desc: 'Модели спорят и приводят контраргументы', icon: '🎤' },
+  collaboration: { label: 'Совместная работа', desc: 'Модели дополняют ответы друг друга', icon: '🤝' },
+  sequential: { label: 'Последовательно', desc: 'Каждая модель высказывается по очереди', icon: '📋' },
+}
+
+const contextModeLabels: Record<string, { label: string; desc: string }> = {
+  full: { label: 'Полный контекст', desc: 'Все предыдущие сообщения всех моделей' },
+  last_round: { label: 'Последний раунд', desc: 'Только сообщения предыдущего раунда' },
+  topic_only: { label: 'Только тема', desc: 'Без предыдущего контекста' },
 }
 
 export function ArenaChatPanel() {
@@ -60,15 +82,24 @@ export function ArenaChatPanel() {
   const setArenaChatConfig = useArenaStore(state => state.setArenaChatConfig)
   const setArenaChatSession = useArenaStore(state => state.setArenaChatSession)
   const updateArenaChatSession = useArenaStore(state => state.updateArenaChatSession)
+  const arenaChatSetup = useArenaStore(state => state.arenaChatSetup)
+  const setArenaChatSetup = useArenaStore(state => state.setArenaChatSetup)
 
-  const [topic, setTopic] = useState('')
-  const [selectedModels, setSelectedModels] = useState<string[]>([])
-  const [maxRounds, setMaxRounds] = useState(3)
-  const [mode, setMode] = useState<'debate' | 'collaboration' | 'sequential'>('debate')
-  const [visibleMessagesPerModel, setVisibleMessagesPerModel] = useState(5)
+  // Persisted state from store (survives tab switches)
+  const topic = arenaChatSetup.topic
+  const selectedParticipants = arenaChatSetup.selectedParticipants
+  const maxRounds = arenaChatSetup.maxRounds
+  const mode = arenaChatSetup.mode
+  const contextMode = arenaChatSetup.contextMode
+
+  // Local transient state
   const [isLoading, setIsLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
   const [collapsedMessages, setCollapsedMessages] = useState<Set<string>>(new Set())
-  
+  const [customModelId, setCustomModelId] = useState('')
+  const [activeTab, setActiveTab] = useState<'rounds' | 'history'>('rounds')
+  const [selectedModelForHistory, setSelectedModelForHistory] = useState<string | null>(null)
+
   const scrollRef = useRef<HTMLDivElement>(null)
   const abortRef = useRef<AbortController | null>(null)
 
@@ -78,20 +109,52 @@ export function ArenaChatPanel() {
     }
   }, [arenaChatSession?.messages, isLoading])
 
-  const handleStart = async () => {
-    if (!topic.trim() || selectedModels.length === 0) return
+  const toggleParticipant = useCallback((model: DebateModel) => {
+    const current = useArenaStore.getState().arenaChatSetup.selectedParticipants
+    const exists = current.find(p => p.id === model.id)
+    const next = exists
+      ? current.filter(p => p.id !== model.id)
+      : [...current, model]
+    setArenaChatSetup({ selectedParticipants: next })
+  }, [setArenaChatSetup])
 
+  const addCustomModel = useCallback(() => {
+    const id = customModelId.trim()
+    if (!id) return
+    const current = useArenaStore.getState().arenaChatSetup.selectedParticipants
+    if (current.find(p => p.id === id)) return
+
+    const provider = id.includes('/') ? id.split('/')[0] : 'custom'
+    const newModel: DebateModel = {
+      id,
+      name: id.split('/').pop() || id,
+      provider,
+      custom: true,
+    }
+    setArenaChatSetup({ selectedParticipants: [...current, newModel] })
+    setCustomModelId('')
+  }, [customModelId, setArenaChatSetup])
+
+  const removeParticipant = useCallback((modelId: string) => {
+    const current = useArenaStore.getState().arenaChatSetup.selectedParticipants
+    setArenaChatSetup({ selectedParticipants: current.filter(p => p.id !== modelId) })
+  }, [setArenaChatSetup])
+
+  const handleStart = async () => {
+    if (!topic.trim() || selectedParticipants.length === 0) return
+
+    setError(null)
     const config: ArenaChatConfig = {
-      participantModelIds: selectedModels,
+      participants: selectedParticipants,
       topic: topic.trim(),
       maxRounds,
       mode,
-      visibleMessagesPerModel,
+      visibleMessagesPerModel: 10,
       includeUserInLoop: false,
+      contextMode,
     }
 
     setArenaChatConfig(config)
-
     await runFirstRound(config)
   }
 
@@ -120,6 +183,7 @@ export function ArenaChatPanel() {
         id: `arena-${Date.now()}`,
         config,
         messages: data.messages,
+        perModelHistory: data.perModelHistory || {},
         currentRound: data.currentRound,
         isRunning: data.isRunning,
         createdAt: new Date().toISOString(),
@@ -127,11 +191,12 @@ export function ArenaChatPanel() {
       })
 
       if (data.isRunning && data.currentRound < config.maxRounds) {
-        await runAdditionalRounds(config, data.messages, data.currentRound)
+        await runAdditionalRounds(config, data.messages, data.currentRound, data.perModelHistory || {})
       }
     } catch (error: any) {
       if (error.name !== 'AbortError') {
         console.error('Arena chat error:', error)
+        setError(error.message || 'Failed to start debate')
         const current = useArenaStore.getState().arenaChatSession
         if (current) setArenaChatSession({ ...current, isRunning: false })
       }
@@ -144,42 +209,55 @@ export function ArenaChatPanel() {
   const runAdditionalRounds = async (
     config: ArenaChatConfig,
     messages: ArenaChatMessage[],
-    startRound: number
+    startRound: number,
+    startPerModelHistory: Record<string, ArenaChatMessage[]>
   ) => {
     let currentMessages = [...messages]
+    let currentHistory = { ...startPerModelHistory }
     let round = startRound
 
     while (round < config.maxRounds && abortRef.current?.signal.aborted !== true) {
-      const res = await fetch('/api/arena-chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        signal: abortRef.current?.signal,
-        body: JSON.stringify({
-          action: 'round',
-          config,
-          previousMessages: currentMessages,
+      try {
+        const res = await fetch('/api/arena-chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          signal: abortRef.current?.signal,
+          body: JSON.stringify({
+            action: 'round',
+            config,
+            previousMessages: currentMessages,
+            perModelHistory: currentHistory,
+            currentRound: round,
+          }),
+        })
+
+        if (!res.ok) {
+          const error = await res.json()
+          throw new Error(error.error || 'Failed to run round')
+        }
+
+        const data = await res.json()
+        currentMessages = data.messages
+        currentHistory = data.perModelHistory || currentHistory
+        round = data.currentRound
+
+        setArenaChatSession({
+          messages: currentMessages,
+          perModelHistory: currentHistory,
           currentRound: round,
-        }),
-      })
+          isRunning: data.isRunning,
+          updatedAt: new Date().toISOString(),
+        } as any)
 
-      if (!res.ok) {
-        throw new Error('Failed to run round')
-      }
-
-      const data = await res.json()
-      currentMessages = data.messages
-      round = data.currentRound
-
-      setArenaChatSession({
-        messages: currentMessages,
-        currentRound: round,
-        isRunning: data.isRunning,
-        updatedAt: new Date().toISOString(),
-      } as any)
-
-      // Небольшая задержка между раундами
-      if (data.isRunning) {
-        await new Promise(resolve => setTimeout(resolve, 500))
+        if (data.isRunning) {
+          await new Promise(resolve => setTimeout(resolve, 500))
+        }
+      } catch (error: any) {
+        if (error.name !== 'AbortError') {
+          console.error('Arena chat round error:', error)
+          setError(error.message || 'Failed during debate round')
+          break
+        }
       }
     }
 
@@ -201,33 +279,35 @@ export function ArenaChatPanel() {
   }
 
   const handleNewTopic = () => {
+    setError(null)
     setArenaChatConfig(null)
     setArenaChatSession(null)
-    setTopic('')
+    setArenaChatSetup({
+      topic: '',
+      selectedParticipants: [],
+      maxRounds: 3,
+      mode: 'debate',
+      contextMode: 'full',
+    })
     setCollapsedMessages(new Set())
+    setActiveTab('rounds')
   }
 
   const toggleMessageCollapsed = (msgId: string) => {
     setCollapsedMessages(prev => {
       const next = new Set(prev)
-      if (next.has(msgId)) {
-        next.delete(msgId)
-      } else {
-        next.add(msgId)
-      }
+      if (next.has(msgId)) next.delete(msgId)
+      else next.add(msgId)
       return next
     })
   }
 
-  const toggleModelSelection = (modelId: string) => {
-    setSelectedModels(prev =>
-      prev.includes(modelId)
-        ? prev.filter(id => id !== modelId)
-        : [...prev, modelId]
-    )
+  const getModelById = (modelId: string): DebateModel | undefined => {
+    return arenaChatConfig?.participants.find(p => p.id === modelId)
+      || models.find(m => m.id === modelId)
+      || { id: modelId, name: modelId.split('/').pop() || modelId, provider: 'custom' }
   }
 
-  // Settings panel
   if (!arenaChatSession) {
     return (
       <div className="flex flex-col h-[calc(100vh-4rem)] lg:h-screen bg-background">
@@ -244,6 +324,12 @@ export function ArenaChatPanel() {
         </div>
 
         <div className="flex-1 overflow-y-auto px-6 py-4">
+          {error && (
+            <div className="mb-4 p-3 rounded-md bg-red-50 border border-red-200 text-red-700 text-sm">
+              <div className="font-medium mb-1">Ошибка:</div>
+              {error}
+            </div>
+          )}
           {/* Topic */}
           <Card className="mb-4 bg-card border-border">
             <CardHeader>
@@ -255,7 +341,7 @@ export function ArenaChatPanel() {
             <CardContent>
               <Textarea
                 value={topic}
-                onChange={(e) => setTopic(e.target.value)}
+                onChange={(e) => setArenaChatSetup({ topic: e.target.value })}
                 placeholder="Введите тему, которую модели будут обсуждать..."
                 className="min-h-[80px]"
               />
@@ -267,28 +353,43 @@ export function ArenaChatPanel() {
             <CardHeader>
               <CardTitle className="text-base flex items-center gap-2">
                 <Layers className="w-4 h-4" />
-                Режим общения
+                Режим и контекст
               </CardTitle>
             </CardHeader>
-            <CardContent>
+            <CardContent className="space-y-4">
               <div className="grid grid-cols-3 gap-2">
-                {(Object.keys(modeLabels) as Array<keyof typeof modeLabels>).map((m) => (
+                {Object.entries(modeLabels).map(([m, info]) => (
                   <Button
                     key={m}
                     variant={mode === m ? 'default' : 'outline'}
-                    onClick={() => setMode(m as any)}
-                    className="h-auto py-3 px-3 text-sm"
+                    onClick={() => setArenaChatSetup({ mode: m as any })}
+                    className="h-auto py-3 px-3 text-sm flex-col items-start"
                   >
-                    <div className="text-center">
-                      <div>{modeLabels[m]}</div>
-                      <div className="text-xs text-muted-foreground mt-1">
-                        {m === 'debate' && 'Модели спорят и приводят контраргументы'}
-                        {m === 'collaboration' && 'Модели дополняют ответы друг друга'}
-                        {m === 'sequential' && 'Каждая модель высказывается по очереди'}
-                      </div>
+                    <div className="text-center w-full">
+                      <div>{info.icon} {info.label}</div>
+                      <div className="text-xs text-muted-foreground mt-1">{info.desc}</div>
                     </div>
                   </Button>
                 ))}
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Контекст для моделей</label>
+                <div className="grid grid-cols-3 gap-2">
+                  {Object.entries(contextModeLabels).map(([cm, info]) => (
+                    <Button
+                      key={cm}
+                      variant={contextMode === cm ? 'default' : 'outline'}
+                      onClick={() => setArenaChatSetup({ contextMode: cm as any })}
+                      className="h-auto py-2 px-2 text-xs"
+                    >
+                      <div className="text-center">
+                        <div className="font-medium">{info.label}</div>
+                        <div className="text-[10px] text-muted-foreground mt-0.5">{info.desc}</div>
+                      </div>
+                    </Button>
+                  ))}
+                </div>
               </div>
             </CardContent>
           </Card>
@@ -303,9 +404,9 @@ export function ArenaChatPanel() {
             </CardHeader>
             <CardContent>
               <div className="flex items-center gap-3">
-                <Button variant="outline" onClick={() => setMaxRounds(Math.max(1, maxRounds - 1))}>-</Button>
+                <Button variant="outline" onClick={() => setArenaChatSetup({ maxRounds: Math.max(1, maxRounds - 1) })}>-</Button>
                 <div className="text-lg font-bold w-8 text-center">{maxRounds}</div>
-                <Button variant="outline" onClick={() => setMaxRounds(Math.min(10, maxRounds + 1))}>+</Button>
+                <Button variant="outline" onClick={() => setArenaChatSetup({ maxRounds: Math.min(10, maxRounds + 1) })}>+</Button>
               </div>
             </CardContent>
           </Card>
@@ -315,68 +416,129 @@ export function ArenaChatPanel() {
             <CardHeader>
               <CardTitle className="text-base flex items-center gap-2">
                 <Users className="w-4 h-4" />
-                Участники ({selectedModels.length})
+                Участники ({selectedParticipants.length})
               </CardTitle>
             </CardHeader>
-            <CardContent>
-              <div className="grid grid-cols-2 gap-2 max-h-64 overflow-y-auto">
-                {models.map((model) => (
-                  <Button
-                    key={model.id}
-                    variant={selectedModels.includes(model.id) ? 'default' : 'outline'}
-                    className="justify-start h-auto py-2 px-3"
-                    onClick={() => toggleModelSelection(model.id)}
-                  >
-                    <div className="text-left w-full">
-                      <div className="font-medium text-sm">{model.name}</div>
-                      <div className="text-xs text-muted-foreground">{model.provider}</div>
+            <CardContent className="space-y-4">
+              {/* Pre-configured models */}
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+                {models.map((model) => {
+                  const isSelected = selectedParticipants.find(p => p.id === model.id)
+                  return (
+                    <div
+                      key={model.id}
+                      onClick={() => toggleParticipant({
+                        id: model.id,
+                        name: model.name,
+                        provider: model.provider,
+                      })}
+                      className={cn(
+                        'cursor-pointer border rounded-lg p-3 transition-all hover:border-primary/50',
+                        isSelected
+                          ? 'border-primary bg-primary/5 ring-1 ring-primary/20'
+                          : 'border-border bg-card hover:bg-muted/50'
+                      )}
+                    >
+                      <div className="flex items-center gap-2">
+                        <div className={cn(
+                          'w-6 h-6 rounded flex items-center justify-center text-xs font-bold',
+                          isSelected ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground'
+                        )}>
+                          {isSelected ? <Check className="w-3.5 h-3.5" /> : (providerIcons[model.provider] || '?')}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="font-medium text-sm truncate">{model.name}</div>
+                          <div className="text-xs text-muted-foreground">{model.provider}</div>
+                        </div>
+                      </div>
                     </div>
-                  </Button>
-                ))}
+                  )
+                })}
               </div>
+
+              {/* Custom model */}
+              <div className="flex gap-2">
+                <Input
+                  value={customModelId}
+                  onChange={(e) => setCustomModelId(e.target.value)}
+                  placeholder="Добавить модель по ID (например: google/gemini-2.5-pro)..."
+                  className="flex-1"
+                  onKeyDown={(e) => e.key === 'Enter' && addCustomModel()}
+                />
+                <Button variant="outline" onClick={addCustomModel} disabled={!customModelId.trim()}>
+                  <Plus className="w-4 h-4" />
+                </Button>
+              </div>
+
+              {/* Selected participants list */}
+              {selectedParticipants.length > 0 && (
+                <div className="flex flex-wrap gap-2">
+                  {selectedParticipants.map(p => (
+                    <Badge
+                      key={p.id}
+                      variant="secondary"
+                      className={cn('gap-1 cursor-pointer', providerBadgeColors[p.provider || 'custom'])}
+                      onClick={() => removeParticipant(p.id)}
+                    >
+                      {p.name}
+                      <X className="w-3 h-3" />
+                    </Badge>
+                  ))}
+                </div>
+              )}
             </CardContent>
           </Card>
 
           {/* Presets */}
           <Card className="mb-4 bg-card border-border">
             <CardHeader>
-              <CardTitle className="text-base">Пресеты</CardTitle>
+              <CardTitle className="text-base">Быстрые пресеты</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="space-y-2">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
                 <Button
                   variant="outline"
-                  className="w-full justify-start text-left"
+                  className="w-full justify-start text-left h-auto py-3"
                   onClick={() => {
-                    setSelectedModels([
+                    const presetModels = [
                       'openai/o3-mini',
                       'anthropic/claude-3.5-sonnet',
                       'google/gemini-2.5-pro',
-                    ])
-                    setMode('debate')
-                    setMaxRounds(3)
+                    ]
+                    setArenaChatSetup({
+                      selectedParticipants: presetModels.map(id => {
+                        const m = models.find(m => m.id === id)
+                        return m ? { id: m.id, name: m.name, provider: m.provider } : { id, name: id.split('/').pop() || id, provider: 'custom' }
+                      }),
+                      mode: 'debate',
+                      maxRounds: 3,
+                      contextMode: 'full',
+                    })
                   }}
                 >
                   <div>
                     <div className="font-medium">🔥 Классические дебаты</div>
                     <div className="text-xs text-muted-foreground">
-                      GPT-4 vs Claude vs Gemini — 3 раунда
+                      GPT-4 vs Claude vs Gemini — 3 раунда, полный контекст
                     </div>
                   </div>
                 </Button>
                 <Button
                   variant="outline"
-                  className="w-full justify-start text-left"
+                  className="w-full justify-start text-left h-auto py-3"
                   onClick={() => {
-                    setSelectedModels(models.map(m => m.id))
-                    setMode('collaboration')
-                    setMaxRounds(2)
+                    setArenaChatSetup({
+                      selectedParticipants: models.map(m => ({ id: m.id, name: m.name, provider: m.provider })),
+                      mode: 'collaboration',
+                      maxRounds: 2,
+                      contextMode: 'last_round',
+                    })
                   }}
                 >
                   <div>
                     <div className="font-medium">🧠 Мозговой штурм</div>
                     <div className="text-xs text-muted-foreground">
-                      Все модели — 2 раунда совместной работы
+                      Все модели — 2 раунда, только последний раунд
                     </div>
                   </div>
                 </Button>
@@ -386,7 +548,7 @@ export function ArenaChatPanel() {
 
           <Button
             className="w-full h-12 text-base"
-            disabled={!topic.trim() || selectedModels.length === 0}
+            disabled={!topic.trim() || selectedParticipants.length === 0}
             onClick={handleStart}
           >
             <Play className="w-4 h-4 mr-2" />
@@ -397,25 +559,25 @@ export function ArenaChatPanel() {
     )
   }
 
-  // Active session
   const messages = arenaChatSession?.messages || []
   const userMessages = messages.filter(m => m.role === 'user')
   const assistantMessages = messages.filter(m => m.role === 'assistant')
+  const perModelHistory = arenaChatSession?.perModelHistory || {}
 
   return (
     <div className="flex flex-col h-[calc(100vh-4rem)] lg:h-screen bg-background">
       {/* Header */}
       <div className="flex items-center justify-between px-6 py-4 border-b border-border">
-        <div>
+        <div className="flex-1 min-w-0">
           <h1 className="text-xl font-semibold text-foreground flex items-center gap-2">
-            <Sparkles className="w-5 h-5 text-primary" />
-            AI Арена
+            <Sparkles className="w-5 h-5 text-primary shrink-0" />
+            <span className="truncate">AI Арена</span>
           </h1>
-          <p className="text-sm text-muted-foreground">
+          <p className="text-sm text-muted-foreground truncate">
             {arenaChatConfig?.topic}
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 shrink-0 ml-4">
           {isLoading ? (
             <Button variant="destructive" onClick={handleStop} className="gap-2">
               <StopCircle className="w-4 h-4" />
@@ -433,122 +595,213 @@ export function ArenaChatPanel() {
       {/* Stats */}
       <div className="flex items-center gap-4 px-6 py-2 bg-muted/30 border-b border-border text-sm flex-wrap">
         <Badge variant="outline" className="bg-primary/10 text-primary border-primary/30">
-          {arenaChatConfig?.mode === 'debate' ? '🎤 Дебаты' : arenaChatConfig?.mode === 'collaboration' ? '🤝 Совместная' : '📋 Последовательно'}
+          {modeLabels[arenaChatConfig?.mode || 'debate']?.icon} {modeLabels[arenaChatConfig?.mode || 'debate']?.label}
+        </Badge>
+        <Badge variant="outline" className="bg-secondary">
+          <Brain className="w-3 h-3 mr-1" />
+          {contextModeLabels[arenaChatConfig?.contextMode || 'full']?.label}
         </Badge>
         <span className="text-muted-foreground">
-          📊 Раунд: {arenaChatSession.currentRound} / {arenaChatConfig?.maxRounds}
+          Раунд: {arenaChatSession.currentRound} / {arenaChatConfig?.maxRounds}
         </span>
         <span className="text-muted-foreground">
-          💬 Сообщений: {messages.length}
+          💬 {messages.length} сообщений
         </span>
         <span className="text-muted-foreground">
-          👥 Моделей: {arenaChatConfig?.participantModelIds.length}
+          👥 {arenaChatConfig?.participants.length} моделей
         </span>
       </div>
 
-      {/* Messages */}
-      <div className="flex-1 overflow-y-auto px-6 py-4" ref={scrollRef}>
-        {userMessages.length > 0 && (
-          <Card className="mb-6 border-primary/30 bg-primary/5">
-            <CardContent className="pt-4">
-              <div className="flex items-start gap-3">
-                <div className="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center shrink-0">
-                  <User className="w-4 h-4 text-primary" />
-                </div>
-                <div>
-                  <div className="font-medium text-sm text-primary mb-1">Тема</div>
-                  <div className="text-foreground">{userMessages[0].content}</div>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        )}
+      {/* Tabs */}
+      <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as any)} className="flex-1 flex flex-col overflow-hidden">
+        <TabsList className="mx-6 mt-2 w-auto self-start">
+          <TabsTrigger value="rounds" className="gap-1">
+            <MessageSquare className="w-3.5 h-3.5" />
+            Раунды
+          </TabsTrigger>
+          <TabsTrigger value="history" className="gap-1">
+            <History className="w-3.5 h-3.5" />
+            История по моделям
+          </TabsTrigger>
+        </TabsList>
 
-        {isLoading && (
-          <div className="flex items-center gap-2 text-muted-foreground text-sm mb-4">
-            <div className="animate-spin w-4 h-4 border-2 border-current border-t-transparent rounded-full" />
-            Генерация раунда {arenaChatSession.currentRound + 1}...
-          </div>
-        )}
-
-        {assistantMessages.length > 0 && (
-          <div className="space-y-4">
-            {/* Group by turn */}
-            {(() => {
-              const turns = [...new Set(assistantMessages.map(m => m.turn))].sort((a, b) => a - b)
-              
-              return turns.map(turn => (
-                <div key={turn} className="space-y-3">
-                  <div className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
-                    <div className="w-6 h-6 rounded-full bg-muted flex items-center justify-center text-xs">
-                      {turn}
+        <TabsContent value="rounds" className="flex-1 overflow-hidden flex flex-col m-0 mt-0">
+          <div className="flex-1 overflow-y-auto px-6 py-4" ref={scrollRef}>
+            {/* Topic */}
+            {userMessages.length > 0 && (
+              <Card className="mb-6 border-primary/30 bg-primary/5">
+                <CardContent className="pt-4">
+                  <div className="flex items-start gap-3">
+                    <div className="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center shrink-0">
+                      <User className="w-4 h-4 text-primary" />
                     </div>
-                    Раунд {turn}
+                    <div>
+                      <div className="font-medium text-sm text-primary mb-1">Тема</div>
+                      <div className="text-foreground">{userMessages[0].content}</div>
+                    </div>
                   </div>
-                  <div className="grid gap-3">
-                    {arenaChatConfig?.participantModelIds.map(modelId => {
-                      const modelMsg = assistantMessages.find(m => m.modelId === modelId && m.turn === turn)
-                      const model = models.find(m => m.id === modelId)
-                      if (!modelMsg || !model) return null
-                      
-                      const isCollapsed = collapsedMessages.has(modelMsg.id)
-                      const provider = model.provider
-                      
-                      return (
-                        <Card key={modelId} className={cn('border bg-card', providerColors[provider])}>
+                </CardContent>
+              </Card>
+            )}
+
+            {/* Loading */}
+            {isLoading && (
+              <div className="flex items-center gap-2 text-muted-foreground text-sm mb-4">
+                <div className="animate-spin w-4 h-4 border-2 border-current border-t-transparent rounded-full" />
+                Генерация раунда {arenaChatSession.currentRound + 1}...
+              </div>
+            )}
+
+            {/* Messages grouped by turn */}
+            {assistantMessages.length > 0 && (
+              <div className="space-y-4">
+                {(() => {
+                  const turns = [...new Set(assistantMessages.map(m => m.turn))].sort((a, b) => a - b)
+
+                  return turns.map(turn => (
+                    <div key={turn} className="space-y-3">
+                      <div className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
+                        <div className="w-6 h-6 rounded-full bg-muted flex items-center justify-center text-xs">
+                          {turn}
+                        </div>
+                        Раунд {turn}
+                      </div>
+                      <div className="grid gap-3">
+                        {arenaChatConfig?.participants.map(participant => {
+                          const modelMsg = assistantMessages.find(m => m.modelId === participant.id && m.turn === turn)
+                          if (!modelMsg) return null
+
+                          const isCollapsed = collapsedMessages.has(modelMsg.id)
+                          const provider = participant.provider || 'custom'
+
+                          return (
+                            <Card key={participant.id} className={cn('border', providerColors[provider])}>
+                              <CardContent className="pt-4">
+                                <div className="flex items-center justify-between mb-2">
+                                  <div className="flex items-center gap-2">
+                                    <div className={cn('w-7 h-7 rounded-md flex items-center justify-center text-xs font-bold', providerBadgeColors[provider])}>
+                                      {providerIcons[provider] || '?'}
+                                    </div>
+                                    <span className="font-medium text-foreground">{participant.name}</span>
+                                    <Badge variant="outline" className="text-[10px] h-5">
+                                      {provider}
+                                    </Badge>
+                                  </div>
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    className="h-6 w-6 p-0"
+                                    onClick={() => toggleMessageCollapsed(modelMsg.id)}
+                                  >
+                                    {isCollapsed ? <ChevronDown className="w-3 h-3" /> : <ChevronUp className="w-3 h-3" />}
+                                  </Button>
+                                </div>
+                                {!isCollapsed ? (
+                                  <div className="text-sm text-foreground">
+                                    <MarkdownRenderer content={modelMsg.content} />
+                                  </div>
+                                ) : (
+                                  <div className="text-sm text-muted-foreground italic line-clamp-1">
+                                    {modelMsg.content?.slice(0, 80)}...
+                                  </div>
+                                )}
+                              </CardContent>
+                            </Card>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  ))
+                })()}
+              </div>
+            )}
+
+            {messages.length === 0 && !isLoading && (
+              <div className="flex flex-col items-center justify-center h-full py-20 text-center">
+                <div className="w-16 h-16 rounded-2xl bg-primary/10 flex items-center justify-center mb-4">
+                  <Bot className="w-8 h-8 text-primary" />
+                </div>
+                <h2 className="text-xl font-semibold text-foreground mb-2">Готово к запуску</h2>
+                <p className="text-muted-foreground">
+                  Настройте параметры и начните дискуссию
+                </p>
+              </div>
+            )}
+          </div>
+        </TabsContent>
+
+        <TabsContent value="history" className="flex-1 overflow-hidden flex flex-col m-0 mt-0">
+          <div className="flex h-full">
+            {/* Model selector sidebar */}
+            <div className="w-48 border-r border-border p-4 space-y-2 overflow-y-auto">
+              <div className="text-xs font-medium text-muted-foreground mb-2 uppercase tracking-wider">Модели</div>
+              {arenaChatConfig?.participants.map(participant => {
+                const history = perModelHistory[participant.id] || []
+                const isActive = selectedModelForHistory === participant.id
+                return (
+                  <button
+                    key={participant.id}
+                    onClick={() => setSelectedModelForHistory(participant.id)}
+                    className={cn(
+                      'w-full text-left p-2 rounded-lg text-sm transition-colors',
+                      isActive ? 'bg-primary/10 border border-primary/20' : 'hover:bg-muted border border-transparent'
+                    )}
+                  >
+                    <div className="font-medium">{participant.name}</div>
+                    <div className="text-xs text-muted-foreground">{history.length} ответов</div>
+                  </button>
+                )
+              })}
+            </div>
+
+            {/* History content */}
+            <div className="flex-1 overflow-y-auto p-4">
+              {selectedModelForHistory ? (() => {
+                const participant = arenaChatConfig?.participants.find(p => p.id === selectedModelForHistory)
+                const history = perModelHistory[selectedModelForHistory] || []
+                const provider = participant?.provider || 'custom'
+
+                return (
+                  <div className="space-y-4">
+                    <div className="flex items-center gap-2 pb-2 border-b border-border">
+                      <div className={cn('w-6 h-6 rounded flex items-center justify-center text-xs font-bold', providerBadgeColors[provider])}>
+                        {providerIcons[provider] || '?'}
+                      </div>
+                      <h3 className="font-medium">{participant?.name}</h3>
+                      <Badge variant="outline" className="text-xs">{history.length} сообщений</Badge>
+                    </div>
+
+                    {history.length === 0 ? (
+                      <div className="text-muted-foreground text-sm">Нет сообщений</div>
+                    ) : (
+                      history.map((msg, idx) => (
+                        <Card key={msg.id} className={cn('border', providerColors[provider])}>
                           <CardContent className="pt-4">
                             <div className="flex items-center justify-between mb-2">
-                              <div className="flex items-center gap-2">
-                                <div className="w-7 h-7 rounded-md flex items-center justify-center text-xs font-bold bg-muted">
-                                  {providerIcons[provider] || '?'}
-                                </div>
-                                <span className="font-medium text-foreground">{model.name}</span>
-                              </div>
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                className="h-6 w-6 p-0"
-                                onClick={() => toggleMessageCollapsed(modelMsg.id)}
-                              >
-                                {isCollapsed ? (
-                                  <ChevronDown className="w-3 h-3" />
-                                ) : (
-                                  <ChevronUp className="w-3 h-3" />
-                                )}
-                              </Button>
+                              <Badge variant="outline" className="text-[10px]">Раунд {msg.turn}</Badge>
+                              <span className="text-xs text-muted-foreground">
+                                {new Date(msg.timestamp).toLocaleTimeString()}
+                              </span>
                             </div>
-                            {!isCollapsed ? (
-                              <div className="text-sm text-foreground">
-                                <MarkdownRenderer content={modelMsg.content} />
-                              </div>
-                            ) : (
-                              <div className="text-sm text-muted-foreground italic line-clamp-1">
-                                {modelMsg.content?.slice(0, 80)}...
-                              </div>
-                            )}
+                            <div className="text-sm text-foreground">
+                              <MarkdownRenderer content={msg.content} />
+                            </div>
                           </CardContent>
                         </Card>
-                      )
-                    })}
+                      ))
+                    )}
                   </div>
+                )
+              })() : (
+                <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
+                  <History className="w-8 h-8 mb-2 opacity-50" />
+                  <p className="text-sm">Выберите модель для просмотра истории</p>
                 </div>
-              ))
-            })()}
-          </div>
-        )}
-
-        {messages.length === 0 && !isLoading && (
-          <div className="flex flex-col items-center justify-center h-full py-20 text-center">
-            <div className="w-16 h-16 rounded-2xl bg-primary/10 flex items-center justify-center mb-4">
-              <Bot className="w-8 h-8 text-primary" />
+              )}
             </div>
-            <h2 className="text-xl font-semibold text-foreground mb-2">Готово к запуску</h2>
-            <p className="text-muted-foreground">
-              Настройте параметры и начните дискуссию
-            </p>
           </div>
-        )}
-      </div>
+        </TabsContent>
+      </Tabs>
     </div>
   )
 }

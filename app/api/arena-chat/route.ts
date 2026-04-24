@@ -1,4 +1,4 @@
-import { ArenaChatConfig, ArenaChatMessage } from '@/lib/types'
+import { ArenaChatConfig, ArenaChatMessage, DebateModel } from '@/lib/types'
 
 // Ollama local configuration
 const OLLAMA_BASE_URL = process.env.OLLAMA_BASE_URL || 'http://localhost:11434'
@@ -140,6 +140,7 @@ function buildModelContext(
 export async function POST(req: Request) {
   try {
     const body = await req.json()
+    console.log('[Arena Chat API] Received request:', { action: body.action, participants: body.config?.participants?.map((p: any) => p.id) })
     const { action, config, userMessage } = body as {
       action: 'start' | 'round' | 'step'
       config?: ArenaChatConfig
@@ -151,8 +152,8 @@ export async function POST(req: Request) {
     }
 
     if (action === 'start') {
-      if (!config || !config.participantModelIds || config.participantModelIds.length === 0) {
-        return new Response(JSON.stringify({ error: 'Need config with participantModelIds' }), { status: 400 })
+      if (!config || !config.participants || config.participants.length === 0) {
+        return new Response(JSON.stringify({ error: 'Need config with participants' }), { status: 400 })
       }
 
       // Создаём начальное сообщение от пользователя
@@ -166,18 +167,20 @@ export async function POST(req: Request) {
 
       // Каждая модель отвечает по очереди
       const messages: ArenaChatMessage[] = [userMsg]
-      const allModelIds = config.participantModelIds
+      const perModelHistory: Record<string, ArenaChatMessage[]> = {}
       let currentRound = 0
 
       // Первый раунд — каждая модель отвечает на тему
-      for (const modelId of allModelIds) {
-        const model = await getModelInfo(modelId)
+      for (const participant of config.participants) {
+        const modelId = participant.id
+        const model = await getModelInfo(participant)
         const contextMessages = buildContextMessagesForAPI(messages, modelId, config)
         
         const systemPrompt = config.perModelSystemPrompt?.[modelId] 
           || config.systemPrompt 
           || 'Вы участвуете в дискуссии с другими ИИ-моделями. Изложите свою точку зрения.'
 
+        console.log('[Arena Chat API] Calling model:', modelId, 'messages count:', [{ role: 'system', content: systemPrompt }, ...contextMessages].length)
         const content = await callModel(
           modelId,
           [{ role: 'system', content: systemPrompt }, ...contextMessages],
@@ -195,12 +198,18 @@ export async function POST(req: Request) {
           timestamp: new Date().toISOString(),
         }
         messages.push(assistantMsg)
+        
+        if (!perModelHistory[modelId]) {
+          perModelHistory[modelId] = []
+        }
+        perModelHistory[modelId].push(assistantMsg)
       }
 
       currentRound = 1
 
       return new Response(JSON.stringify({
         messages,
+        perModelHistory,
         currentRound,
         isRunning: currentRound < config.maxRounds,
       }))
@@ -208,18 +217,26 @@ export async function POST(req: Request) {
 
     if (action === 'round') {
       // Один полный раунд — каждая модель отвечает, видя предыдущие ответы
-      if (!config || !config.participantModelIds || config.participantModelIds.length === 0) {
+      if (!config || !config.participants || config.participants.length === 0) {
         return new Response(JSON.stringify({ error: 'Need config' }), { status: 400 })
       }
 
       const previousMessages: ArenaChatMessage[] = body.previousMessages || []
+      const currentHistory: Record<string, ArenaChatMessage[]> = body.perModelHistory || {}
       const currentRoundNum = body.currentRound || 0
       const newRoundNum = currentRoundNum + 1
 
       const newMessages: ArenaChatMessage[] = [...previousMessages]
+      const newHistory: Record<string, ArenaChatMessage[]> = {}
+      
+      // Copy existing history
+      for (const key of Object.keys(currentHistory)) {
+        newHistory[key] = [...currentHistory[key]]
+      }
 
-      for (const modelId of config.participantModelIds) {
-        const model = await getModelInfo(modelId)
+      for (const participant of config.participants) {
+        const modelId = participant.id
+        const model = await getModelInfo(participant)
         const contextMessages = buildContextMessagesForAPI(newMessages, modelId, config)
         
         const systemPrompt = config.perModelSystemPrompt?.[modelId] 
@@ -243,12 +260,18 @@ export async function POST(req: Request) {
           timestamp: new Date().toISOString(),
         }
         newMessages.push(assistantMsg)
+        
+        if (!newHistory[modelId]) {
+          newHistory[modelId] = []
+        }
+        newHistory[modelId].push(assistantMsg)
       }
 
       const isRunning = newRoundNum < config.maxRounds
 
       return new Response(JSON.stringify({
         messages: newMessages,
+        perModelHistory: newHistory,
         currentRound: newRoundNum,
         isRunning,
       }))
@@ -256,37 +279,37 @@ export async function POST(req: Request) {
 
     if (action === 'step') {
       // Один шаг — ОДНА модель отвечает (для sequential mode с видимостью в реальном времени)
-      if (!config || !config.participantModelIds) {
+      if (!config || !config.participants) {
         return new Response(JSON.stringify({ error: 'Need config' }), { status: 400 })
       }
 
       const currentIndex = body.currentModelIndex ?? 0
-      const modelId = config.participantModelIds[currentIndex]
+      const participant = config.participants[currentIndex]
       
-      if (!modelId) {
+      if (!participant) {
         return new Response(JSON.stringify({ error: 'Invalid model index' }), { status: 400 })
       }
 
       const previousMessages: ArenaChatMessage[] = body.previousMessages || []
-      const model = await getModelInfo(modelId)
-      const contextMessages = buildContextMessagesForAPI(previousMessages, modelId, config)
+      const model = await getModelInfo(participant)
+      const contextMessages = buildContextMessagesForAPI(previousMessages, participant.id, config)
       
-      const systemPrompt = config.perModelSystemPrompt?.[modelId] 
+      const systemPrompt = config.perModelSystemPrompt?.[participant.id] 
         || config.systemPrompt 
         || 'Вы участвуете в дискуссии с другими ИИ-моделями.'
 
       const content = await callModel(
-        modelId,
+        participant.id,
         [{ role: 'system', content: systemPrompt }, ...contextMessages],
         model.temperature,
         model.maxTokens
       )
 
       const assistantMsg: ArenaChatMessage = {
-        id: `msg-${modelId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        id: `msg-${participant.id}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
         role: 'assistant',
         content,
-        modelId,
+        modelId: participant.id,
         modelName: model.name,
         turn: body.currentRound || 1,
         timestamp: new Date().toISOString(),
@@ -294,8 +317,8 @@ export async function POST(req: Request) {
 
       return new Response(JSON.stringify({
         message: assistantMsg,
-        nextModelIndex: (currentIndex + 1) % config.participantModelIds.length,
-        isRoundComplete: (currentIndex + 1) >= config.participantModelIds.length,
+        nextModelIndex: (currentIndex + 1) % config.participants.length,
+        isRoundComplete: (currentIndex + 1) >= config.participants.length,
       }))
     }
 
@@ -306,31 +329,24 @@ export async function POST(req: Request) {
   }
 }
 
-async function getModelInfo(modelId: string) {
-  // Try to get model from store defaults or use defaults
-  const defaults: Record<string, { name: string; temperature: number; maxTokens: number }> = {
-    'openai/gpt-4o-mini': { name: 'GPT-4o Mini', temperature: 0.7, maxTokens: 2048 },
-    'openai/gpt-4o': { name: 'GPT-4o', temperature: 0.7, maxTokens: 2048 },
-    'anthropic/claude-3.5-sonnet': { name: 'Claude 3.5 Sonnet', temperature: 0.7, maxTokens: 2048 },
-    'anthropic/claude-3-opus': { name: 'Claude 3 Opus', temperature: 0.7, maxTokens: 2048 },
-    'google/gemini-pro': { name: 'Gemini Pro', temperature: 0.7, maxTokens: 2048 },
-    'openai/o3-mini': { name: 'GPT-4', temperature: 0.7, maxTokens: 4096 },
-  }
-
+async function getModelInfo(participant: DebateModel) {
+  // Use participant config or fallbacks
+  const modelId = participant.id
+  
   // Check Ollama models
   if (isLocalModel(modelId)) {
     const ollamaModel = extractOllamaModel(modelId)
     return {
-      name: `Ollama: ${ollamaModel}`,
-      temperature: 0.7,
-      maxTokens: 2048,
+      name: participant.name || `Ollama: ${ollamaModel}`,
+      temperature: participant.temperature ?? 0.7,
+      maxTokens: participant.maxTokens ?? 2048,
     }
   }
 
-  return defaults[modelId] || { 
-    name: modelId.split('/').pop() || modelId, 
-    temperature: 0.7, 
-    maxTokens: 2048 
+  return {
+    name: participant.name || modelId.split('/').pop() || modelId,
+    temperature: participant.temperature ?? 0.7,
+    maxTokens: participant.maxTokens ?? 2048,
   }
 }
 
@@ -341,8 +357,23 @@ function buildContextMessagesForAPI(
 ): Array<{ role: string; content: string }> {
   const result: Array<{ role: string; content: string }> = []
   
+  // Filter messages based on contextMode
+  let relevantMessages = messages
+  
+  if (config.contextMode === 'topic_only') {
+    // Only include the initial user topic message
+    relevantMessages = messages.filter(m => m.role === 'user')
+  } else if (config.contextMode === 'last_round') {
+    // Only include messages from the last round
+    const maxTurn = Math.max(...messages.filter(m => m.role === 'assistant').map(m => m.turn), 0)
+    if (maxTurn > 0) {
+      relevantMessages = messages.filter(m => m.role === 'user' || m.turn >= maxTurn)
+    }
+  }
+  // 'full' mode uses all messages (default)
+  
   // Добавляем все сообщения в хронологическом порядке
-  for (const msg of messages) {
+  for (const msg of relevantMessages) {
     if (msg.role === 'user') {
       result.push({ role: 'user', content: msg.content })
     } else if (msg.modelId === currentModelId) {
@@ -350,10 +381,9 @@ function buildContextMessagesForAPI(
       result.push({ role: 'assistant', content: msg.content })
     } else if (msg.modelId) {
       // Ответы других моделей — как "user" сообщения чтобы модель видела их
-      const context = buildModelContext(messages, currentModelId, config.visibleMessagesPerModel, config.mode)
       result.push({ 
         role: 'user', 
-        content: `[Ответ от ${msg.modelName}]:\n${msg.content}\n\n---\nВаш ответ:` 
+        content: `[${msg.modelName || msg.modelId}]: ${msg.content}` 
       })
     }
   }
