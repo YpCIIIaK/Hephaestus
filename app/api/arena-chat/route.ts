@@ -226,6 +226,8 @@ export async function POST(req: Request) {
       const currentRoundNum = body.currentRound || 0
       const newRoundNum = currentRoundNum + 1
 
+      console.log('[Arena Chat API] Round request:', { currentRoundNum, newRoundNum, maxRounds: config.maxRounds, participants: config.participants.map((p: any) => p.id) })
+
       const newMessages: ArenaChatMessage[] = [...previousMessages]
       const newHistory: Record<string, ArenaChatMessage[]> = {}
       
@@ -235,14 +237,19 @@ export async function POST(req: Request) {
       }
 
       for (const participant of config.participants) {
+        console.log('[Arena Chat API] Round processing participant:', participant)
         const modelId = participant.id
+        console.log('[Arena Chat API] modelId:', modelId)
         const model = await getModelInfo(participant)
+        console.log('[Arena Chat API] modelInfo:', model)
         const contextMessages = buildContextMessagesForAPI(newMessages, modelId, config)
+        console.log('[Arena Chat API] contextMessages count:', contextMessages.length)
         
         const systemPrompt = config.perModelSystemPrompt?.[modelId] 
           || config.systemPrompt 
           || 'Вы участвуете в дискуссии с другими ИИ-моделями. Ответьте на их аргументы.'
 
+        console.log('[Arena Chat API] Calling model:', modelId, 'messages count:', [{ role: 'system', content: systemPrompt }, ...contextMessages].length)
         const content = await callModel(
           modelId,
           [{ role: 'system', content: systemPrompt }, ...contextMessages],

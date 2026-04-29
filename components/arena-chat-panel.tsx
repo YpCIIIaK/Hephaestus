@@ -18,6 +18,7 @@ import {
   User,
   ChevronDown,
   ChevronUp,
+  RefreshCw,
   StopCircle,
   Play,
   Plus,
@@ -97,6 +98,10 @@ export function ArenaChatPanel() {
   const [error, setError] = useState<string | null>(null)
   const [collapsedMessages, setCollapsedMessages] = useState<Set<string>>(new Set())
   const [customModelId, setCustomModelId] = useState('')
+  const [allOpenRouterModels, setAllOpenRouterModels] = useState<any[]>([])
+  const [isLoadingModels, setIsLoadingModels] = useState(false)
+  const [modelSearch, setModelSearch] = useState('')
+  const [showModelDropdown, setShowModelDropdown] = useState(false)
   const [activeTab, setActiveTab] = useState<'rounds' | 'history'>('rounds')
   const [selectedModelForHistory, setSelectedModelForHistory] = useState<string | null>(null)
 
@@ -212,62 +217,71 @@ export function ArenaChatPanel() {
     startRound: number,
     startPerModelHistory: Record<string, ArenaChatMessage[]>
   ) => {
+    setIsLoading(true)
+    console.log('[Arena Panel] runAdditionalRounds start', startRound, 'max', config.maxRounds)
     let currentMessages = [...messages]
     let currentHistory = { ...startPerModelHistory }
     let round = startRound
 
-    while (round < config.maxRounds && abortRef.current?.signal.aborted !== true) {
-      try {
-        const res = await fetch('/api/arena-chat', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          signal: abortRef.current?.signal,
-          body: JSON.stringify({
-            action: 'round',
-            config,
-            previousMessages: currentMessages,
+    try {
+      while (round < config.maxRounds && abortRef.current?.signal.aborted !== true) {
+        console.log('[Arena Panel] Round loop, round=', round)
+        try {
+          const res = await fetch('/api/arena-chat', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            signal: abortRef.current?.signal,
+            body: JSON.stringify({
+              action: 'round',
+              config,
+              previousMessages: currentMessages,
+              perModelHistory: currentHistory,
+              currentRound: round,
+            }),
+          })
+
+          if (!res.ok) {
+            const error = await res.json()
+            throw new Error(error.error || 'Failed to run round')
+          }
+
+          const data = await res.json()
+          currentMessages = data.messages
+          currentHistory = data.perModelHistory || currentHistory
+          round = data.currentRound
+
+          const existing = useArenaStore.getState().arenaChatSession
+          setArenaChatSession({
+            ...(existing || { id: `arena-${Date.now()}`, config, createdAt: new Date().toISOString() }),
+            messages: currentMessages,
             perModelHistory: currentHistory,
             currentRound: round,
-          }),
-        })
+            isRunning: data.isRunning,
+            updatedAt: new Date().toISOString(),
+          })
 
-        if (!res.ok) {
-          const error = await res.json()
-          throw new Error(error.error || 'Failed to run round')
-        }
-
-        const data = await res.json()
-        currentMessages = data.messages
-        currentHistory = data.perModelHistory || currentHistory
-        round = data.currentRound
-
-        setArenaChatSession({
-          messages: currentMessages,
-          perModelHistory: currentHistory,
-          currentRound: round,
-          isRunning: data.isRunning,
-          updatedAt: new Date().toISOString(),
-        } as any)
-
-        if (data.isRunning) {
-          await new Promise(resolve => setTimeout(resolve, 500))
-        }
-      } catch (error: any) {
-        if (error.name !== 'AbortError') {
-          console.error('Arena chat round error:', error)
-          setError(error.message || 'Failed during debate round')
-          break
+          if (data.isRunning) {
+            await new Promise(resolve => setTimeout(resolve, 500))
+          }
+        } catch (error: any) {
+          if (error.name !== 'AbortError') {
+            console.error('Arena chat round error:', error)
+            setError(error.message || 'Failed during debate round')
+            break
+          }
         }
       }
-    }
-
-    const current = useArenaStore.getState().arenaChatSession
-    if (current) {
-      setArenaChatSession({
-        ...current,
-        isRunning: false,
-        updatedAt: new Date().toISOString(),
-      })
+    } finally {
+      setIsLoading(false)
+      const current = useArenaStore.getState().arenaChatSession
+      if (current) {
+        setArenaChatSession({
+          ...current,
+          isRunning: false,
+          updatedAt: new Date().toISOString(),
+        })
+      }
+      console.log('[Arena Panel] runAdditionalRounds finished')
     }
   }
 
@@ -306,6 +320,21 @@ export function ArenaChatPanel() {
     return arenaChatConfig?.participants.find(p => p.id === modelId)
       || models.find(m => m.id === modelId)
       || { id: modelId, name: modelId.split('/').pop() || modelId, provider: 'custom' }
+  }
+
+  const loadOpenRouterModels = async () => {
+    setIsLoadingModels(true)
+    try {
+      const res = await fetch('/api/models')
+      const data = await res.json()
+      if (data.models && data.models.length > 0) {
+        setAllOpenRouterModels(data.models)
+      }
+    } catch (e) {
+      console.error('Failed to load OpenRouter models:', e)
+    } finally {
+      setIsLoadingModels(false)
+    }
   }
 
   if (!arenaChatSession) {
@@ -456,18 +485,79 @@ export function ArenaChatPanel() {
                 })}
               </div>
 
-              {/* Custom model */}
-              <div className="flex gap-2">
-                <Input
-                  value={customModelId}
-                  onChange={(e) => setCustomModelId(e.target.value)}
-                  placeholder="Добавить модель по ID (например: google/gemini-2.5-pro)..."
-                  className="flex-1"
-                  onKeyDown={(e) => e.key === 'Enter' && addCustomModel()}
-                />
-                <Button variant="outline" onClick={addCustomModel} disabled={!customModelId.trim()}>
-                  <Plus className="w-4 h-4" />
-                </Button>
+              {/* OpenRouter model picker */}
+              <div className="space-y-2">
+                <div className="relative">
+                  <button
+                    onClick={() => {
+                      setShowModelDropdown(!showModelDropdown)
+                      if (allOpenRouterModels.length === 0) loadOpenRouterModels()
+                    }}
+                    className="w-full h-9 px-3 text-sm bg-background border border-input rounded-md flex items-center justify-between hover:border-ring transition-colors"
+                  >
+                    <span className="truncate text-muted-foreground">Выбрать модель из OpenRouter...</span>
+                    <ChevronDown className="w-3 h-3 text-muted-foreground shrink-0" />
+                  </button>
+                  {showModelDropdown && (
+                    <div className="absolute top-full left-0 mt-1 w-full bg-popover border border-border rounded-lg shadow-lg z-50 max-h-80 flex flex-col">
+                      <div className="p-2 border-b border-border">
+                        <input
+                          type="text"
+                          value={modelSearch}
+                          onChange={(e) => setModelSearch(e.target.value)}
+                          placeholder="Поиск моделей..."
+                          className="w-full h-8 px-2 text-xs bg-background border border-input rounded-md focus:outline-none focus:ring-1 focus:ring-ring"
+                          autoFocus
+                        />
+                      </div>
+                      <div className="flex-1 overflow-y-auto p-1">
+                        {isLoadingModels ? (
+                          <div className="flex items-center justify-center py-8">
+                            <RefreshCw className="w-4 h-4 animate-spin text-muted-foreground" />
+                          </div>
+                        ) : (
+                          <>
+                            {allOpenRouterModels
+                              .filter(m =>
+                                !modelSearch ||
+                                m.name?.toLowerCase().includes(modelSearch.toLowerCase()) ||
+                                m.id?.toLowerCase().includes(modelSearch.toLowerCase()) ||
+                                m.provider?.toLowerCase().includes(modelSearch.toLowerCase())
+                              )
+                              .map(m => (
+                                <button
+                                  key={m.id}
+                                  onClick={() => {
+                                    toggleParticipant({
+                                      id: m.id,
+                                      name: m.name || m.id,
+                                      provider: 'custom',
+                                    })
+                                    setShowModelDropdown(false)
+                                    setModelSearch('')
+                                  }}
+                                  className="w-full px-2 py-1.5 text-xs text-left rounded hover:bg-accent transition-colors flex items-center gap-2"
+                                >
+                                  <span className="font-medium truncate flex-1">{m.name || m.id}</span>
+                                  <span className="text-[10px] text-muted-foreground shrink-0">{m.provider || ''}</span>
+                                </button>
+                              ))}
+                            {allOpenRouterModels.filter(m =>
+                              !modelSearch ||
+                              m.name?.toLowerCase().includes(modelSearch.toLowerCase()) ||
+                              m.id?.toLowerCase().includes(modelSearch.toLowerCase())
+                            ).length === 0 && (
+                              <div className="px-2 py-4 text-xs text-muted-foreground text-center">Модели не найдены</div>
+                            )}
+                          </>
+                        )}
+                      </div>
+                      <div className="p-2 border-t border-border text-[10px] text-muted-foreground text-center">
+                        {allOpenRouterModels.length} моделей доступно
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
 
               {/* Selected participants list */}

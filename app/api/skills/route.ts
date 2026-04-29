@@ -6,9 +6,40 @@ import { parseSkillFile, serializeSkillFile } from '@/lib/skills/types';
 // Skills directory - using project root skills folder
 const SKILLS_DIR = path.join(process.cwd(), 'skills');
 
-/** GET all skills */
-export async function GET() {
+/** GET all skills or single skill by ID */
+export async function GET(req: Request) {
   try {
+    const { searchParams } = new URL(req.url);
+    const id = searchParams.get('id');
+
+    if (id) {
+      // Fetch single skill with full content
+      const skillDir = path.join(SKILLS_DIR, id);
+      const skillMarkdownPath = path.join(skillDir, 'SKILL.md');
+
+      if (!fs.existsSync(skillMarkdownPath)) {
+        return NextResponse.json({ error: `Skill '${id}' not found` }, { status: 404 });
+      }
+
+      const content = fs.readFileSync(skillMarkdownPath, 'utf-8');
+      const parsed = parseSkillFile(content);
+
+      if (!parsed) {
+        return NextResponse.json({ error: `Failed to parse skill '${id}'` }, { status: 500 });
+      }
+
+      return NextResponse.json({
+        skill: {
+          id,
+          name: parsed.metadata.name,
+          description: parsed.metadata.description,
+          category: parsed.metadata.category,
+          content: parsed.content,
+          updatedAt: fs.statSync(skillMarkdownPath).mtime.toISOString(),
+        },
+      });
+    }
+
     const skillsList: any[] = [];
 
     if (fs.existsSync(SKILLS_DIR)) {
@@ -106,6 +137,51 @@ export async function POST(req: Request) {
   } catch (error) {
     console.error('Error creating skill:', error);
     return NextResponse.json({ error: 'Failed to create skill' }, { status: 500 });
+  }
+}
+
+/** PUT update existing skill by ID */
+export async function PUT(req: Request) {
+  try {
+    const { id, name, description, category, content } = await req.json();
+
+    if (!id || !name || !description || content === undefined) {
+      return NextResponse.json(
+        { error: 'Missing required fields: id, name, description, content' },
+        { status: 400 }
+      );
+    }
+
+    const skillDir = path.join(SKILLS_DIR, id);
+    const skillFilePath = path.join(skillDir, 'SKILL.md');
+
+    if (!fs.existsSync(skillFilePath)) {
+      return NextResponse.json(
+        { error: `Skill '${id}' not found` },
+        { status: 404 }
+      );
+    }
+
+    const fileContent = serializeSkillFile({
+      metadata: { name, description, category },
+      content,
+    });
+
+    fs.writeFileSync(skillFilePath, fileContent, 'utf-8');
+
+    return NextResponse.json({
+      success: true,
+      skill: {
+        id,
+        name,
+        description,
+        category,
+        updatedAt: new Date().toISOString(),
+      },
+    });
+  } catch (error) {
+    console.error('Error updating skill:', error);
+    return NextResponse.json({ error: 'Failed to update skill' }, { status: 500 });
   }
 }
 

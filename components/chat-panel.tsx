@@ -44,7 +44,9 @@ import {
   Table2,
   Download,
   Paperclip,
-  File
+  File,
+  BookOpen,
+  Wrench
 } from 'lucide-react'
 import { downloadCSV, downloadPDF } from '@/lib/export-utils'
 import { ModelResponse, ArenaConfig } from '@/lib/types'
@@ -125,6 +127,9 @@ export function ChatPanel() {
   const [copiedId, setCopiedId] = useState<string | null>(null)
   const [attachedFiles, setAttachedFiles] = useState<AttachedFile[]>([])
   const [uploadingFiles, setUploadingFiles] = useState<boolean>(false)
+  const [skillPickerOpen, setSkillPickerOpen] = useState(false)
+  const [skills, setSkills] = useState<Array<{id: string; name: string; description: string; category?: string}>>([])
+  const [skillSearch, setSkillSearch] = useState('')
   const fileInputRef = useRef<HTMLInputElement>(null)
   const textareaContainerRef = useRef<HTMLDivElement>(null)
   const chatMode = useArenaStore(state => state.chatMode)
@@ -199,6 +204,34 @@ export function ChatPanel() {
   const removeAttachedFile = (index: number) => {
     setAttachedFiles(prev => prev.filter((_, i) => i !== index))
   }
+
+  const fetchSkills = async () => {
+    try {
+      const res = await fetch('/api/skills')
+      const data = await res.json()
+      if (data.skills) setSkills(data.skills)
+    } catch (e) {
+      console.error('Failed to fetch skills:', e)
+    }
+  }
+
+  const openSkillPicker = () => {
+    setSkillPickerOpen(true)
+    fetchSkills()
+  }
+
+  const insertSkill = (skillId: string) => {
+    const prefix = chatInput.trim() ? chatInput.trim() + '\n\n' : ''
+    setChatInput(`${prefix}skill(skill_name="${skillId}")\n\n`)
+    setSkillPickerOpen(false)
+    setSkillSearch('')
+  }
+
+  const filteredSkills = skills.filter(skill =>
+    !skillSearch ||
+    skill.name.toLowerCase().includes(skillSearch.toLowerCase()) ||
+    skill.id.toLowerCase().includes(skillSearch.toLowerCase())
+  )
 
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault()
@@ -340,7 +373,7 @@ export function ChatPanel() {
       
       return { 
         nodeId, 
-        label: node.data.label, 
+        label: node.data.label || node.label || 'Untitled', 
         type: node.type, 
         modelId: node.data.model?.id,
         modelName: node.data.model?.name || node.data.model?.id,
@@ -849,7 +882,7 @@ export function ChatPanel() {
               disabled={false}
             />
             {/* File Attach Button (Inside Textarea) */}
-            <div className="absolute left-3 bottom-3">
+            <div className="absolute left-3 bottom-3 flex items-center gap-1">
               <FilePickerDialog
                 onSelect={handleFileUpload}
                 triggerButton={
@@ -864,7 +897,61 @@ export function ChatPanel() {
                   </Button>
                 }
               />
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8 text-muted-foreground hover:text-violet-500"
+                onClick={openSkillPicker}
+                title="Insert skill"
+              >
+                <BookOpen className="w-4 h-4" />
+              </Button>
             </div>
+
+            {/* Skill Picker Popup */}
+            {skillPickerOpen && (
+              <div className="absolute bottom-full left-0 mb-2 w-80 bg-card border border-border rounded-lg shadow-lg z-50 overflow-hidden">
+                <div className="p-3 border-b border-border">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-xs font-medium text-muted-foreground">Skills Library</span>
+                    <Button variant="ghost" size="icon" className="h-5 w-5" onClick={() => setSkillPickerOpen(false)}>
+                      <X className="w-3 h-3" />
+                    </Button>
+                  </div>
+                  <input
+                    type="text"
+                    placeholder="Search skills..."
+                    value={skillSearch}
+                    onChange={(e) => setSkillSearch(e.target.value)}
+                    className="w-full h-7 px-2 text-xs rounded border border-border bg-secondary focus:outline-none focus:ring-1 focus:ring-primary"
+                    autoFocus
+                  />
+                </div>
+                <div className="max-h-60 overflow-y-auto p-2 space-y-1">
+                  {filteredSkills.length === 0 ? (
+                    <div className="text-xs text-muted-foreground text-center py-4">
+                      {skills.length === 0 ? 'Loading...' : 'No skills found'}
+                    </div>
+                  ) : (
+                    filteredSkills.map(skill => (
+                      <button
+                        key={skill.id}
+                        onClick={() => insertSkill(skill.id)}
+                        className="w-full text-left p-2 rounded-md hover:bg-secondary transition-colors"
+                      >
+                        <div className="flex items-center gap-2">
+                          <Wrench className="w-3 h-3 text-violet-400 shrink-0" />
+                          <div className="min-w-0">
+                            <div className="text-xs font-medium truncate">{skill.name}</div>
+                            <div className="text-[10px] text-muted-foreground truncate">{skill.id}</div>
+                          </div>
+                        </div>
+                      </button>
+                    ))
+                  )}
+                </div>
+              </div>
+            )}
           </div>
           <div className="absolute top-3 right-14 flex flex-col items-end gap-1 pointer-events-none">
             {messageQueue.length > 0 && (
