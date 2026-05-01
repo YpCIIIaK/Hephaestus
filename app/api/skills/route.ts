@@ -97,11 +97,21 @@ export async function POST(req: Request) {
 
     // Ensure skills directory exists
     if (!fs.existsSync(SKILLS_DIR)) {
+      console.log(`[Skills] Creating skills directory: ${SKILLS_DIR}`);
       fs.mkdirSync(SKILLS_DIR, { recursive: true });
     }
 
     const skillDir = path.join(SKILLS_DIR, skillId);
     const skillFilePath = path.join(skillDir, 'SKILL.md');
+
+    // Security check: prevent directory traversal
+    if (!skillDir.startsWith(path.resolve(SKILLS_DIR))) {
+      console.error(`[Skills] Invalid path detected: ${skillDir}`);
+      return NextResponse.json(
+        { error: 'Invalid skill ID' },
+        { status: 400 }
+      );
+    }
 
     // Check if skill already exists
     if (fs.existsSync(skillFilePath)) {
@@ -112,6 +122,7 @@ export async function POST(req: Request) {
     }
 
     // Create skill directory
+    console.log(`[Skills] Creating skill directory: ${skillDir}`);
     fs.mkdirSync(skillDir, { recursive: true });
 
     // Serialize skill file
@@ -121,7 +132,15 @@ export async function POST(req: Request) {
     });
 
     // Write file
+    console.log(`[Skills] Writing skill file: ${skillFilePath}`);
     fs.writeFileSync(skillFilePath, fileContent, 'utf-8');
+
+    // Verify file was created
+    if (!fs.existsSync(skillFilePath)) {
+      throw new Error('Failed to create skill file');
+    }
+
+    console.log(`[Skills] Skill created successfully: ${skillId}`);
 
     return NextResponse.json({
       success: true,
@@ -134,9 +153,16 @@ export async function POST(req: Request) {
         updatedAt: new Date().toISOString(),
       },
     });
-  } catch (error) {
-    console.error('Error creating skill:', error);
-    return NextResponse.json({ error: 'Failed to create skill' }, { status: 500 });
+  } catch (error: any) {
+    console.error('[Skills] Error creating skill:', error);
+    console.error('[Skills] Error stack:', error.stack);
+    return NextResponse.json(
+      { 
+        error: 'Failed to create skill',
+        details: error.message 
+      }, 
+      { status: 500 }
+    );
   }
 }
 

@@ -377,9 +377,9 @@ Step-by-step instructions for using the skill.
 
 ## Examples
 
-\`\`\`
+```
 Example usage here
-\`\`\`
+```
 ```
 
 ### Using Skills in Chat
@@ -398,6 +398,167 @@ Access the Skill Manager through the Agent Constructor to:
 - Create new skills with a visual editor
 - View and manage existing skills
 - Organize skills by category
+
+### Skill Validation & Security
+
+Skills are validated before creation/update:
+- **ID validation**: Only alphanumeric characters, hyphens, and underscores allowed
+- **Required fields**: `name` and `description` are mandatory
+- **Security checks**: Detects potentially dangerous code patterns
+- **Content length**: Warns if content exceeds recommended size
+
+### API Endpoints
+
+The Skill System provides a RESTful API:
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/skills` | List all available skills |
+| `POST` | `/api/skills` | Create a new skill |
+| `PUT` | `/api/skills` | Update an existing skill |
+| `DELETE` | `/api/skills?id={id}` | Delete a skill (or all if no ID) |
+
+**Example: Create a Skill**
+```bash
+curl -X POST http://localhost:3000/api/skills \
+  -H "Content-Type: application/json" \
+  -d '{
+    "skillId": "my-skill",
+    "name": "My Skill",
+    "description": "A useful skill",
+    "category": "productivity",
+    "content": "## What is this skill?\n\n..."
+  }'
+```
+
+**Example: Update a Skill**
+```bash
+curl -X PUT http://localhost:3000/api/skills \
+  -H "Content-Type: application/json" \
+  -d '{
+    "id": "my-skill",
+    "name": "Updated Skill",
+    "description": "Updated description",
+    "content": "Updated content"
+  }'
+```
+
+**Example: Delete a Skill**
+```bash
+curl -X DELETE "http://localhost:3000/api/skills?id=my-skill"
+```
+
+## Testing
+
+The project includes comprehensive tests to ensure reliability:
+
+### Test Coverage
+
+- **Unit Tests**: Core functionality (parsing, serialization, validation)
+- **Integration Tests**: API endpoints (where applicable)
+- **Security Tests**: Input validation and sanitization
+
+### Running Tests
+
+```bash
+# Run all tests
+pnpm test
+
+# Run tests in watch mode
+pnpm test:watch
+
+# Generate coverage report
+pnpm test:coverage
+
+# Run tests with UI
+pnpm test:ui
+```
+
+### Test Structure
+
+```
+tests/
+  skills.types.test.ts      # Skill file parsing/serialization
+  skills.validation.test.ts # Skill validation logic
+  setup.ts                  # Test setup and utilities
+```
+
+### Current Coverage
+
+- Skill file parsing: ✅ 5 tests
+- Skill validation: ✅ 6 tests
+- Total: **11 tests** passing
+
+### Adding New Tests
+
+Create test files in the `tests/` directory following the existing patterns:
+
+```typescript
+import { describe, it, expect } from 'vitest';
+
+describe('My Feature', () => {
+  it('should do something', () => {
+    expect(true).toBe(true);
+  });
+});
+```
+
+## Development
+
+### Prerequisites
+
+- Node.js 18+
+- pnpm (recommended) or npm/yarn
+- Ollama (optional, for local models)
+
+### Setup
+
+1. Install dependencies:
+```bash
+pnpm install
+```
+
+2. Create `.env`:
+```dotenv
+OPENROUTER_API_KEY=your_key_here
+OLLAMA_BASE_URL=http://localhost:11434
+```
+
+3. Run tests:
+```bash
+pnpm test
+```
+
+4. Start dev server:
+```bash
+pnpm dev
+```
+
+### Tech Stack
+
+- **Frontend**: Next.js 16, React 19, TypeScript
+- **Styling**: Tailwind CSS, Radix UI
+- **State**: Zustand
+- **Testing**: Vitest, jsdom
+- **AI**: OpenRouter API, Ollama (local)
+
+## Security Notes
+
+- **Never commit `.env`** with API keys
+- Skill system validates all inputs to prevent directory traversal
+- File editing endpoints should only be used in trusted environments
+- For production: Add authentication and path allowlists
+
+## Contributing
+
+1. Write tests for new features
+2. Ensure all tests pass
+3. Update documentation
+4. Submit a PR
+
+## License
+
+MIT
 
 ## AI File Editing & Tools
 
