@@ -149,6 +149,7 @@ function Connections() {
 function Models() {
   const aliases = useSettings((s) => s.aliases)
   const setAlias = useSettings((s) => s.setAlias)
+  const freeOnly = useSettings((s) => s.freeOnly)
   const models = useCatalog((s) => s.models)
   const fetchedAt = useCatalog((s) => s.fetchedAt)
   const loading = useCatalog((s) => s.loading)
@@ -157,7 +158,7 @@ function Models() {
   return (
     <Section icon={<Sparkles />} title="Роли моделей" description="Агенты, шаблоны и судьи ссылаются на роли, а не на конкретные модели. Поменяйте модель здесь — и она сменится везде.">
       {(Object.keys(ALIAS_LABELS) as ModelAlias[]).map((a) => {
-        const auto = pickAliasModel(a, models)
+        const auto = pickAliasModel(a, models, freeOnly)
         const autoInfo = models.find((m) => m.id === auto)
         return (
           <div key={a} className="grid items-center gap-2 sm:grid-cols-[200px_1fr]">
@@ -238,6 +239,7 @@ function ChatPrefs() {
 
 function Limits() {
   const limits = useSettings((s) => s.limits)
+  const freeOnly = useSettings((s) => s.freeOnly)
   const set = useSettings((s) => s.set)
   return (
     <Section icon={<Gauge />} title="Лимиты расходов" description="При достижении лимита новые запросы к платным моделям блокируются. 0 — без лимита.">
@@ -249,6 +251,13 @@ function Limits() {
           <Input type="number" min={0} step={1} value={limits.monthlyUsd} onChange={(e) => set({ limits: { ...limits, monthlyUsd: Math.max(0, Number(e.target.value) || 0) } })} />
         </FieldRow>
       </div>
+      <label className="flex items-center justify-between gap-4 border-t border-border pt-4 text-[13px]">
+        <span>
+          Только бесплатные модели
+          <span className="block text-xs text-muted">Роли в режиме «Авто» берут бесплатные модели OpenRouter, запросы к платным блокируются</span>
+        </span>
+        <Switch checked={freeOnly} onCheckedChange={(v) => set({ freeOnly: v })} />
+      </label>
     </Section>
   )
 }

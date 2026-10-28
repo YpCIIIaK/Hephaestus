@@ -107,13 +107,30 @@ const ALIAS_PATTERNS: Record<ModelAlias, RegExp[]> = {
   ],
 }
 
-export function pickAliasModel(alias: ModelAlias, catalog: ModelInfo[]): string | null {
-  const remote = catalog.filter((m) => m.provider === 'openrouter')
-  for (const re of ALIAS_PATTERNS[alias]) {
-    const matches = remote.filter((m) => re.test(m.id)).sort((a, b) => (b.created ?? 0) - (a.created ?? 0))
-    if (matches[0]) return matches[0].id
+// Бесплатные модели OpenRouter (суффикс :free) — для режима «только бесплатные».
+// Порядок важен: сначала крупные модели с инструментами, затем быстрые.
+const FREE_ALIAS_PATTERNS: Record<ModelAlias, RegExp[]> = {
+  '@smart': [/^nvidia\/nemotron-[\d.]+-ultra[^:]*:free$/, /^google\/gemma-[\d.]+-31b[^:]*:free$/],
+  '@default': [/^google\/gemma-[\d.]+-31b[^:]*:free$/, /^nvidia\/nemotron-[\d.]+-super[^:]*:free$/],
+  '@fast': [/^poolside\/laguna-xs[^:]*:free$/, /^google\/gemma-[\d.]+-26b[^:]*:free$/],
+}
+
+/** Модель ничего не стоит: локальная или с нулевой ценой у OpenRouter */
+export function isFreeModel(m: ModelInfo | undefined): boolean {
+  if (!m) return false
+  if (m.provider !== 'openrouter') return true
+  return !!m.pricing && m.pricing.prompt === 0 && m.pricing.completion === 0
+}
+
+export function pickAliasModel(alias: ModelAlias, catalog: ModelInfo[], freeOnly = false): string | null {
+  const remote = catalog.filter((m) => m.provider === 'openrouter' && (!freeOnly || isFreeModel(m)))
+  const newest = (list: ModelInfo[]) => [...list].sort((a, b) => (b.created ?? 0) - (a.created ?? 0))[0]
+  for (const re of (freeOnly ? FREE_ALIAS_PATTERNS : ALIAS_PATTERNS)[alias]) {
+    const match = newest(remote.filter((m) => re.test(m.id)))
+    if (match) return match.id
   }
   const local = catalog.find((m) => m.provider !== 'openrouter')
   if (local) return local.id
+  if (freeOnly) return newest(remote.filter((m) => m.supportsTools))?.id ?? remote[0]?.id ?? null
   return remote[0]?.id ?? null
 }

@@ -1,9 +1,9 @@
 'use client'
 
 import type { LLMCall, LLMCallOptions } from '../engine/llm'
-import { ALIAS_LABELS, isAlias } from '../models'
+import { ALIAS_LABELS, isAlias, isFreeModel, providerOf } from '../models'
 import { NDJSONParser } from '../sse'
-import { resolveModelId } from '../stores/catalog'
+import { modelById, resolveModelId } from '../stores/catalog'
 import { useSettings } from '../stores/settings'
 import { spentSince, startOfDay, startOfMonth, useUsage } from '../stores/usage'
 import type { LLMEvent, LLMRequest, LLMResult, ModelAlias, ToolTrace, Usage } from '../types'
@@ -36,6 +36,9 @@ export const callLLM: LLMCall = async (req: LLMRequest, opts: LLMCallOptions = {
   }
   const budget = budgetProblem()
   if (budget) return { ...base, error: budget }
+  if (useSettings.getState().freeOnly && providerOf(model) === 'openrouter' && !isFreeModel(modelById(model))) {
+    return { ...base, error: `Модель ${model} платная, а в настройках включён режим «Только бесплатные модели»` }
+  }
 
   let text = ''
   let reasoning = ''

@@ -86,6 +86,31 @@ describe('модели', () => {
     expect(pickAliasModel('@fast', cat)).toBe('google/gemini-2.5-flash-lite')
     expect(pickAliasModel('@smart', [{ id: 'ollama/qwen', name: '', provider: 'ollama', vendor: 'ollama' }])).toBe('ollama/qwen')
   })
+  it('в режиме «только бесплатные» автовыбор берёт модели с нулевой ценой', () => {
+    const free = { prompt: 0, completion: 0 }
+    const paid = { prompt: 1e-6, completion: 2e-6 }
+    const cat: ModelInfo[] = [
+      { id: 'anthropic/claude-sonnet-4.5', name: '', provider: 'openrouter', vendor: 'anthropic', pricing: paid, supportsTools: true, created: 9 },
+      { id: 'google/gemini-2.5-flash', name: '', provider: 'openrouter', vendor: 'google', pricing: paid, supportsTools: true, created: 9 },
+      { id: 'nvidia/nemotron-3-ultra-550b-a55b:free', name: '', provider: 'openrouter', vendor: 'nvidia', pricing: free, supportsTools: true, created: 5 },
+      { id: 'google/gemma-4-31b-it:free', name: '', provider: 'openrouter', vendor: 'google', pricing: free, supportsTools: true, created: 4 },
+      { id: 'google/gemma-4-26b-a4b-it:free', name: '', provider: 'openrouter', vendor: 'google', pricing: free, supportsTools: true, created: 4 },
+      // псевдоним с :free в ID, но ненулевой ценой — не годится
+      { id: 'poolside/laguna-xs-2.1:free', name: '', provider: 'openrouter', vendor: 'poolside', pricing: paid, supportsTools: true, created: 6 },
+    ]
+    expect(pickAliasModel('@smart', cat, true)).toBe('nvidia/nemotron-3-ultra-550b-a55b:free')
+    expect(pickAliasModel('@default', cat, true)).toBe('google/gemma-4-31b-it:free')
+    expect(pickAliasModel('@fast', cat, true)).toBe('google/gemma-4-26b-a4b-it:free')
+    expect(pickAliasModel('@smart', cat)).toBe('anthropic/claude-sonnet-4.5')
+    // ни одного шаблона не нашлось — свежая бесплатная модель с инструментами, но не платная
+    const other: ModelInfo[] = [
+      { id: 'openai/gpt-5', name: '', provider: 'openrouter', vendor: 'openai', pricing: paid, supportsTools: true, created: 9 },
+      { id: 'liquid/lfm-2.5-2.6b:free', name: '', provider: 'openrouter', vendor: 'liquid', pricing: free, supportsTools: false, created: 8 },
+      { id: 'recursive/flint-v1.0:free', name: '', provider: 'openrouter', vendor: 'recursive', pricing: free, supportsTools: true, created: 7 },
+    ]
+    expect(pickAliasModel('@smart', other, true)).toBe('recursive/flint-v1.0:free')
+    expect(pickAliasModel('@smart', [other[0]], true)).toBeNull()
+  })
   it('стоимость по прайсу', () => {
     expect(computeCost({ id: 'x', name: '', provider: 'openrouter', vendor: 'x', pricing: { prompt: 1e-6, completion: 2e-6 } }, 1000, 500)).toBeCloseTo(0.002)
     expect(computeCost({ id: 'x', name: '', provider: 'ollama', vendor: 'x' }, 1000, 500)).toBe(0)

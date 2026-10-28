@@ -9,6 +9,8 @@ export interface Settings {
   aliases: Record<ModelAlias, string>
   favorites: string[]
   limits: { dailyUsd: number; monthlyUsd: number }
+  /** Только бесплатные модели: автовыбор ролей берёт модели с нулевой ценой, платные запросы блокируются */
+  freeOnly: boolean
   chat: {
     targets: { kind: 'model' | 'agent' | 'pipeline'; id: string }[]
     tools: ToolsetId[]
@@ -34,6 +36,7 @@ export const DEFAULT_SETTINGS: Settings = {
   aliases: { '@smart': '', '@default': '', '@fast': '' },
   favorites: [],
   limits: { dailyUsd: 5, monthlyUsd: 50 },
+  freeOnly: false,
   chat: {
     targets: [{ kind: 'model', id: '@default' }],
     tools: [],
