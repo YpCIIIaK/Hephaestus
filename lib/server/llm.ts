@@ -230,6 +230,10 @@ export async function* runLLM(req: LLMRequest, signal?: AbortSignal): AsyncGener
       result = yield* streamStep(ep, body, signal)
     } catch (e) {
       if (signal?.aborted) return
+      if (e instanceof GatewayError && e.status === 502) {
+        yield { t: 'error', message: e.message, status: 502 }
+        return
+      }
       if (e instanceof GatewayError && e.status && e.status >= 400) {
         if (tools.length && looksLikeToolsUnsupported(e.status, e.message)) {
           yield { t: 'notice', v: 'Модель не поддерживает инструменты — отвечает без них' }

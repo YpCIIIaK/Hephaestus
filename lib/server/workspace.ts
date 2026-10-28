@@ -17,7 +17,7 @@ export class WorkspaceError extends Error {
 }
 
 export async function ensureWorkspace(): Promise<void> {
-  await fs.mkdir(WORKSPACE_DIR, { recursive: true })
+  await fs.mkdir(/* turbopackIgnore: true */ WORKSPACE_DIR, { recursive: true })
 }
 
 function isInside(parent: string, child: string): boolean {
@@ -39,11 +39,11 @@ export async function resolveWorkspacePath(input: string): Promise<{ abs: string
   // Проверяем реальный путь ближайшего существующего предка: ссылка внутри
   // песочницы не должна вести наружу.
   await ensureWorkspace()
-  const realRoot = await fs.realpath(WORKSPACE_DIR)
+  const realRoot = await fs.realpath(/* turbopackIgnore: true */ WORKSPACE_DIR)
   let probe = abs
   for (;;) {
     try {
-      const real = await fs.realpath(probe)
+      const real = await fs.realpath(/* turbopackIgnore: true */ probe)
       if (!isInside(realRoot, real)) throw new WorkspaceError('Путь выходит за пределы workspace', 403)
       break
     } catch (e) {
@@ -60,7 +60,7 @@ export async function listTree(): Promise<WorkspaceEntry[]> {
   await ensureWorkspace()
   let count = 0
   async function walk(dir: string): Promise<WorkspaceEntry[]> {
-    const entries = await fs.readdir(dir, { withFileTypes: true })
+    const entries = await fs.readdir(/* turbopackIgnore: true */ dir, { withFileTypes: true })
     entries.sort((a, b) => Number(b.isDirectory()) - Number(a.isDirectory()) || a.name.localeCompare(b.name))
     const out: WorkspaceEntry[] = []
     for (const e of entries) {
@@ -72,7 +72,7 @@ export async function listTree(): Promise<WorkspaceEntry[]> {
         if (SKIP_DIRS.has(e.name)) continue
         out.push({ path: rel, name: e.name, type: 'dir', children: await walk(abs) })
       } else if (e.isFile()) {
-        const st = await fs.stat(abs)
+        const st = await fs.stat(/* turbopackIgnore: true */ abs)
         out.push({ path: rel, name: e.name, type: 'file', size: st.size })
       }
     }
@@ -100,13 +100,13 @@ export async function readWorkspaceFile(
   const { abs, rel } = await resolveWorkspacePath(p)
   let st
   try {
-    st = await fs.stat(abs)
+    st = await fs.stat(/* turbopackIgnore: true */ abs)
   } catch {
     throw new WorkspaceError(`Файл не найден: ${rel}`, 404)
   }
   if (!st.isFile()) throw new WorkspaceError(`Это не файл: ${rel}`)
   if (st.size > MAX_READ_BYTES) throw new WorkspaceError(`Файл слишком большой (${Math.round(st.size / 1024)} КБ)`)
-  const content = await fs.readFile(abs, 'utf-8')
+  const content = await fs.readFile(/* turbopackIgnore: true */ abs, 'utf-8')
   const lines = content.split('\n')
   if (range?.startLine || range?.endLine) {
     const start = Math.max(1, range.startLine ?? 1)
@@ -120,11 +120,11 @@ export async function writeWorkspaceFile(p: string, content: string): Promise<{ 
   const { abs, rel } = await resolveWorkspacePath(p)
   if (!rel || rel === '.') throw new WorkspaceError('Укажите имя файла')
   const existed = await fs
-    .stat(abs)
+    .stat(/* turbopackIgnore: true */ abs)
     .then((s) => s.isFile())
     .catch(() => false)
-  await fs.mkdir(path.dirname(abs), { recursive: true })
-  await fs.writeFile(abs, content, 'utf-8')
+  await fs.mkdir(/* turbopackIgnore: true */ path.dirname(abs), { recursive: true })
+  await fs.writeFile(/* turbopackIgnore: true */ abs, content, 'utf-8')
   return { path: rel, bytes: Buffer.byteLength(content, 'utf-8'), created: !existed }
 }
 
@@ -144,7 +144,7 @@ export async function editWorkspaceFile(p: string, oldText: string, newText: str
 export async function deleteWorkspacePath(p: string): Promise<{ path: string }> {
   const { abs, rel } = await resolveWorkspacePath(p)
   if (!rel || rel === '.') throw new WorkspaceError('Нельзя удалить корень workspace', 403)
-  await fs.rm(abs, { recursive: true, force: false }).catch(() => {
+  await fs.rm(/* turbopackIgnore: true */ abs, { recursive: true, force: false }).catch(() => {
     throw new WorkspaceError(`Не найдено: ${rel}`, 404)
   })
   return { path: rel }

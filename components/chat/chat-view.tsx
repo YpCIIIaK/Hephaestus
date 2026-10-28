@@ -69,8 +69,8 @@ export function ChatView() {
   }, [params, router])
 
   useEffect(() => {
-    if (activeId && !conv && conversations.length >= 0) router.replace('/chat')
-  }, [activeId, conv, conversations.length, router])
+    if (activeId && !conv) router.replace('/chat')
+  }, [activeId, conv, router])
 
   const update = useCallback(
     (patch: Partial<Conversation>) => {

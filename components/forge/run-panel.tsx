@@ -26,6 +26,37 @@ function RunStatus({ run }: { run: PipelineRun }) {
   return map[run.status]
 }
 
+/** Диаграмма Ганта: когда работал каждый узел и что шло параллельно */
+function Timeline({ pipeline, run }: { pipeline: Pipeline; run: PipelineRun }) {
+  const rows = pipeline.nodes
+    .map((n) => ({ n, r: run.nodes[n.id] }))
+    .filter(({ r }) => r?.startedAt && r.endedAt && r.status !== 'skipped')
+    .sort((a, b) => a.r.startedAt! - b.r.startedAt!)
+  const total = Math.max(1, (run.endedAt ?? Date.now()) - run.startedAt)
+  if (rows.length < 2) return null
+  return (
+    <div>
+      <div className="mb-1.5 flex items-center justify-between text-[11px] font-semibold uppercase tracking-wider text-faint">
+        Хронология <span className="font-mono normal-case tracking-normal">{formatMs(total)}</span>
+      </div>
+      <div className="space-y-1 rounded-xl border border-border bg-surface p-2.5">
+        {rows.map(({ n, r }) => {
+          const left = ((r.startedAt! - run.startedAt) / total) * 100
+          const width = Math.max(1.5, ((r.endedAt! - r.startedAt!) / total) * 100)
+          return (
+            <div key={n.id} className="grid grid-cols-[88px_1fr] items-center gap-2" title={`${n.label}: ${formatMs(r.endedAt! - r.startedAt!)}`}>
+              <span className="truncate text-[11px] text-muted">{n.label}</span>
+              <div className="relative h-3 rounded bg-surface-2">
+                <div className={cn('absolute inset-y-0 rounded', r.status === 'error' && 'opacity-60')} style={{ left: `${left}%`, width: `${Math.min(width, 100 - left)}%`, background: r.status === 'error' ? 'var(--danger)' : NODE_STYLE[n.kind].color }} />
+              </div>
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
 export function RunPanel({ pipeline, run, onRun, onSelectRun, onSelectNode }: { pipeline: Pipeline; run?: PipelineRun; onRun: (input: string, step: boolean) => void; onSelectRun: (id: string) => void; onSelectNode: (id: string) => void }) {
   const [input, setInput] = useState(() => inputs.get(pipeline.id) ?? run?.input ?? '')
   const [step, setStep] = useState(false)
@@ -121,6 +152,7 @@ export function RunPanel({ pipeline, run, onRun, onSelectRun, onSelectNode }: { 
                 </div>
               </div>
             )}
+            {finished && <Timeline pipeline={pipeline} run={run} />}
             <div>
               <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-faint">Узлы</div>
               <div className="space-y-0.5">

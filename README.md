@@ -1,645 +1,133 @@
-# Hephaestus (Ἥφαιστος) — Multi-Agent LLM Arena
+# Hephaestus — кузница ИИ-агентов
 
-Web app for multi-model chat, configurable DAG pipelines ("Arena"), and **event simulation** powered by OpenRouter + **Ollama local models**.
+Локальная мастерская, где несколько языковых моделей работают вместе: отвечают на один вопрос параллельно, спорят друг с другом, проходят по визуальному конвейеру из агентов и проверок и разбирают события по сценариям. Модели берутся из [OpenRouter](https://openrouter.ai) (сотни облачных моделей по одному ключу), из [Ollama](https://ollama.com) (бесплатно и приватно на вашем компьютере) или с любого OpenAI-совместимого сервера.
 
-## Features
+![Чат: три модели отвечают параллельно, судья собирает лучший ответ](docs/screenshots/chat.png)
 
-- **Multi-model chat**: send one prompt to multiple models and compare results.
-- **Arena pipelines**: build a directed acyclic graph (DAG) of nodes and execute it.
-- **Multi-Agent System**: specialized agents (classifier, analyst, researcher, synthesizer, summarizer) with pre-configured presets.
-- **Event Simulation**: simulate political, economic, military, and technology events with cross-domain analysis.
-- **Ollama Local Support**: run free local models (Llama, Phi, Qwen) — 100% private, no API costs.
-- **Token Optimization**: context compression, RAG, smart file reading — up to 80% token savings.
-- **Analytics**: track token usage, estimated cost, and visualize with Waterfall/Gantt charts.
-- **AI File Editing**: AI can create, edit, and delete files via chat and pipelines.
-- **Smart Fallback Chain**: automatic fallback to backup models on timeout/error.
-- **RAG Knowledge Base**: BM25 search across indexed project files with adjacent chunk inclusion.
-- **Telegram Bot**: interact with AI via Telegram — send text, photos, documents, voice messages.
-- **Agent Constructor**: build custom multi-agent pipelines visually (OpenClaw-style).
-- **Skill System**: create reusable skills (SKILL.md format) that agents can load and use dynamically.
+## Что умеет
 
-## Tech Stack
+**Чат сравнения.** Один вопрос отправляется сразу нескольким участникам: моделям, агентам или пайплайнам. Ответы приходят параллельно и показываются колонками. Судья ранжирует их и собирает итоговый ответ из сильных сторон каждого. У каждого участника своя история диалога, длинные диалоги обрезаются по бюджету токенов. Есть инструменты (поиск в сети, файлы, база знаний, навыки), вложения и рассуждения reasoning-моделей.
 
-- Next.js 16 (App Router)
-- React 19
-- TypeScript
-- Zustand (persisted store)
-- Tailwind CSS + Radix UI (shadcn-style components)
-- OpenRouter API (chat completions + models)
-- **Ollama** (local model inference)
-- DuckDuckGo Lite (web search scraping)
+**Кузница — визуальные пайплайны.** На холсте собирается граф из узлов: вход, агент, веб-поиск, база знаний, файл, маршрутизатор, объединение, проверка, запись в файл, результат. Независимые ветки выполняются параллельно. Маршрутизатор выбирает одну ветку, остальные пропускаются. Проверка оценивает ответ по критериям и отправляет агентов на доработку с замечаниями. Перед запуском показывается оценка стоимости. Запускать можно сразу целиком или пошагово, после запуска видна хронология выполнения узлов. В комплекте 7 шаблонов, а любой пайплайн можно позвать в чат как обычную модель.
 
-## Project Structure
+![Кузница: маршрутизатор отправил запрос программисту, остальные ветки пропущены](docs/screenshots/forge.png)
 
-- `app/`
-  - `page.tsx` — main UI shell (Sidebar + tabs)
-  - `api/` — server routes
-    - `chat/route.ts` — OpenRouter + **Ollama** streaming proxy
-    - `models/route.ts` — fetch OpenRouter model list + pricing mapping
-    - `files/route.ts` — list/read local workspace files
-    - `search/route.ts` — web search endpoint (DuckDuckGo Lite)
-- `components/` — UI components
-  - `chat-panel.tsx` — chat experience (multi-model + pipeline-in-chat)
-  - `arena-panel.tsx` — pipeline designer and pipeline execution UI
-  - `node-settings.tsx` — node configuration with **agent presets**
-  - `sidebar.tsx` — navigation, settings, budget controls
-- `lib/`
-  - `store.ts` — Zustand store: models, nodes/edges, configs, chat history, usage/cost, KB
-  - `executor.ts` — DAG execution engine with **specialized agent nodes**
-  - `agent-config.ts` — **pre-configured agent presets (19 cloud + 5 Ollama)**
-  - `types.ts` — core types with **5 new node types**
-  - `search-utils.ts` — DDG Lite HTML fetch + parsing fallbacks
-  - `tokenizer.ts` — token estimation via `js-tiktoken`
-  - `text-splitter.ts` — text chunking for RAG
-  - `simple-vector-store.ts` — BM25-based vector store with **adjacent chunk inclusion**
+**Дебаты.** Четыре формата: дебаты, мозговой штурм, совет экспертов, автор и критики. Участникам задаются роли, модели и число раундов. Между раундами можно вмешаться с репликой. В конце судья выносит вердикт: оценки, согласие, разногласия и вывод.
 
-## Requirements
+![Дебаты: вердикт судьи](docs/screenshots/debates.png)
 
-- Node.js 18+ recommended
-- pnpm (recommended) or npm/yarn
-- **Ollama** (optional, for local models): https://ollama.ai
+**Сценарный анализ.** Опишите событие. Модель соберёт факты в сети, отраслевые аналитики (политика, экономика, безопасность, технологии и другие) разберут его параллельно, а синтез выдаст сценарии с вероятностями, хронологией, картой последствий, сигналами для наблюдения и рекомендациями. Отчёт экспортируется в Markdown.
 
-## Setup
+![Сценарии: вероятности и карта последствий](docs/screenshots/scenarios.png)
 
-1. Install dependencies:
+**Агенты и навыки.** 11 встроенных агентов: аналитик, исследователь, критик, синтезатор, программист, факт-чекер и другие. Можно создавать своих. Навыки — это инструкции в `skills/<id>/SKILL.md`, модель загружает подходящую сама.
 
-   ```bash
-   pnpm install
-   ```
+**Знания и файлы.** Локальный поиск BM25 по вашим документам с учётом русской морфологии, без эмбеддингов и платных API. Файловые инструменты ИИ работают только в папке `workspace/`, там же лежит встроенный редактор.
 
-2. Create `.env` in project root:
+**Аналитика и лимиты.** Стоимость каждого вызова берётся из ответа провайдера, а не из оценки. Расходы видны по дням, моделям и разделам. Дневной и месячный лимиты блокируют запросы при превышении. Историю можно выгрузить в CSV или JSON.
 
-   ```dotenv
-   OPENROUTER_API_KEY=YOUR_KEY_HERE
-   OLLAMA_BASE_URL=http://localhost:11434  # optional, default
-   ```
+Ещё: светлая и тёмная темы, командная палитра (<kbd>Ctrl</kbd>+<kbd>K</kbd>), мобильная вёрстка, резервная копия всех данных одним файлом.
 
-3. (Optional) Install Ollama and pull local models:
+## Быстрый старт
 
-   ```bash
-   curl -fsSL https://ollama.com/install | sh
-   ollama pull llama3.1:8b      # Analyst (~4.7GB)
-   ollama pull phi4:latest      # Classifier/Summarizer (~3GB)
-   ollama pull qwen2.5:14b      # Researcher (~9GB)
-   ollama pull llama3.1:70b     # Synthesizer (~43GB)
-   ```
+Нужны Node.js 20.9+ и pnpm.
 
-4. Run the dev server:
-
-   ```bash
-   pnpm dev
-   ```
-
-5. Open: http://localhost:3000
-
-### Scripts
-
-- `pnpm dev` — run Next dev server
-- `pnpm build` — production build
-- `pnpm start` — start production server
-- `pnpm lint` — lint
-
-## Core Concepts
-
-### Tabs
-
-- **Chat** — multi-model chat with AI File Editing.
-- **Arena** — pipeline designer/executor with Dry Run.
-- **Analytics** — usage dashboard with Waterfall/Gantt charts and PDF/CSV export.
-
-### Data Model Overview
-
-Main domain state lives in `lib/store.ts` (Zustand + persist).
-
-- **Models**: list of available LLMs with settings.
-- **Arena graph**: `nodes` + `edges`.
-- **Agent Presets**: pre-configured specialized agents in `lib/agent-config.ts`.
-- **Configs**: saved pipeline presets.
-- **Chat**: `messages` + `responses` and `historicalChats`.
-- **Usage**: `globalUsage`, `usageHistory`, `sessionCost`, `maxSessionBudget`.
-- **Knowledge Base**: list of file paths + **BM25 RAG index** with chunking.
-
-## Multi-Agent System
-
-### Specialized Agent Nodes
-
-Five new node types, each optimized for a specific role:
-
-| Node Type | Role | Default Model | Max Tokens | Cost |
-|-----------|------|---------------|------------|------|
-| **Classifier** | Categorize input (political/economic/military/risk) | Gemma 2B (free) | 20-50 | $0 |
-| **Analyst** | Structured analysis with findings and risks | Llama 3.1 8B (free) | 800 | $0 |
-| **Researcher** | Deep analysis with historical context | Qwen 235B | 2000 | Low |
-| **Synthesizer** | Combine multi-agent analysis into final report | Claude Opus | 3000 | Premium |
-| **Summarizer** | Condense to key bullet points | Gemma 9B (free) | 300 | $0 |
-
-### Agent Presets
-
-19 pre-configured presets in `lib/agent-config.ts`:
-
-- **4 Classifiers**: political, economic, military, risk level
-- **2 Routers**: by domain, by urgency
-- **4 Analysts**: political, economic, military, technology
-- **2 Researchers**: political, economic
-- **2 Synthesizers**: strategic (Claude Opus), brief (Claude Sonnet)
-- **1 Validator**: fact-checker
-- **1 Summarizer**: executive summary
-- **5 Ollama Local**: free local models for all roles
-
-### Event Simulation Pipeline
-
-```
-[INPUT EVENT]
-     ↓
-[ROUTERS] — classify domain (political/economic/military/tech)
-     ↓
-     ├──────→ [Political Analyst] ──┐
-     ├──────→ [Economic Analyst] ──┤
-     ├──────→ [Military Analyst] ───┼── [VALIDATOR]
-     └──────→ [Tech Analyst] ──────┤          ↓
-                                  └──── [SYNTHESIZER] → FINAL REPORT
-```
-
-## Arena: Pipelines (DAG)
-
-A pipeline is a DAG defined by:
-
-- Nodes: `ArenaNode[]`
-- Edges: `ArenaEdge[]`
-
-Execution is performed by `lib/executor.ts::executePipeline()`.
-
-### Node Types
-
-Node type is `ArenaNode.type`:
-
-- `prompt` — produces text output via template. Supports `{{input}}`, `{{context}}`, `{{global}}`.
-- `model` — calls `/api/chat` to stream LLM answer.
-- `validator` — validation/summary/scoring of upstream outputs.
-- `aggregator` — merge upstream outputs into single final answer.
-- `search` — web search via DuckDuckGo.
-- `file` — file reading with **Smart Read** for large files.
-- `router` — LLM classifier that activates only the matched outgoing path.
-- `code` — create/edit/delete files via `/api/files/edit`.
-- **`classifier`** — fast categorization (20-50 tokens, strict output).
-- **`analyst`** — structured analysis with findings and recommendations.
-- **`researcher`** — deep analysis with historical context and scenarios.
-- **`synthesizer`** — combine multi-agent analysis into strategic report.
-- **`summarizer`** — condense to key bullet points.
-
-### Topology and Parallelism
-
-- The executor runs nodes in layers based on in-degree (topological progression).
-- Nodes in the same layer can execute in parallel.
-- Parallel nodes are staggered slightly (`idx * 300ms`) to reduce rate-limits.
-
-### Timeouts and Retries
-
-- Each node has a hard timeout: **5 minutes**.
-- LLM calls use a retry wrapper that retries on `429` with exponential backoff.
-
-### Dry Run
-
-Arena UI offers **Dry Run (Preview Prompts)** — no external API calls, useful to inspect exact prompts.
-
-## Telegram Bot
-
-Interact with your AI assistant directly through Telegram — no need to open a browser.
-
-### Setup
-
-1. **Create a bot** via [@BotFather](https://t.me/BotFather) on Telegram:
-   ```
-   /newbot
-   # Follow instructions, get a token like: 123456789:ABCdef...
-   ```
-
-2. **Add token to `.env`**:
-   ```dotenv
-   TELEGRAM_BOT_TOKEN=123456789:ABCdef...
-   NEXT_PUBLIC_APP_URL=https://your-domain.com  # your deployed URL
-   ```
-
-3. **Set webhook** (after deployment):
-   ```bash
-   curl -X POST "https://api.telegram.org/bot<YOUR_TOKEN>/setWebhook?url=https://your-domain.com/api/telegram/webhook"
-   ```
-
-4. **Test it**: Send `/start` to your bot on Telegram.
-
-### Supported Content
-
-| Type | Description |
-|------|-------------|
-| 📝 **Text** | AI chat with context history |
-| 🖼️ **Photos** | Image analysis and description |
-| 📄 **Documents** | File content extraction and analysis |
-| 🎤 **Voice** | Voice messages (transcription coming soon) |
-
-### Bot Commands
-
-| Command | Description |
-|---------|-------------|
-| `/start` | Welcome message and intro |
-| `/help` | Show available commands |
-| `/status` | Session info and mode |
-| `/clear` | Clear chat history |
-| `/pipeline` | Toggle pipeline mode |
-
-### Features
-
-- **Session management**: 30-minute timeout, auto-cleanup
-- **Message history**: Last 20 messages kept for context
-- **Long message splitting**: Auto-splits responses >4000 chars
-- **Chat actions**: Shows "typing..." indicator while processing
-- **Pipeline mode**: Route messages through your Arena pipeline
-
-## Ollama Local Models
-
-Run models locally for **100% free, private** inference:
-
-### Setup
-
-```bash
-# Install Ollama
-curl -fsSL https://ollama.com/install | sh
-
-# Pull models
-ollama pull llama3.1:8b      # Analyst
-ollama pull phi4:latest      # Classifier/Summarizer
-ollama pull qwen2.5:14b      # Researcher
-ollama pull llama3.1:70b     # Synthesizer
-```
-
-### Usage
-
-1. In Arena, add a specialized node (classifier/analyst/researcher/synthesizer/summarizer).
-2. In Node Settings, select **"Local Models (Ollama)"** section.
-3. Choose a preset — the node auto-configures model, prompt, and parameters.
-
-### Token Savings with Ollama
-
-| Task | Cloud Tokens | Ollama Tokens | Savings |
-|------|-------------|---------------|---------|
-| Classifier | 20 (Gemma free) | 50 (Phi-4) | **100% free** |
-| Analyst | 800 (Llama 8B free) | 800 (Llama 8B local) | **100% free** |
-| Researcher | 2000 (Qwen 235B) | 2000 (Qwen 14B local) | **~$0.02 saved** |
-| Synthesizer | 3000 (Claude Opus) | 3000 (Llama 70B local) | **~$0.15 saved** |
-
-## Token Optimization Strategies
-
-### 1. Rational Model Selection
-
-- **Classifiers** → micro-models (Gemma 2B), maxTokens: 20-50
-- **Analysts** → free models (Llama 8B), maxTokens: 800
-- **Synthesizers** → one expensive model (Claude/GPT-4), maxTokens: 3000
-- **Savings: 60-70%**
-
-### 2. Context Compression
-
-- Built-in `contextCompression` in nodes
-- Compresses input context before sending to model
-- Threshold: 1000 tokens, target: 50% compression
-- **Savings: 30-50%** on prompts
-
-### 3. RAG Instead of Full Context
-
-- BM25 search for relevant chunks
-- **Adjacent chunk inclusion** for better context
-- Default topK: 5 (was 3)
-- **Savings: 90%** on large documents
-
-### 4. Smart File Reader
-
-- AI selects only relevant lines from files
-- 500 lines from 10,000+ line files
-- **Savings: 95%** on file reading
-
-## Knowledge Base (Global Knowledge)
-
-The pipeline can inject content of local files into the context of AI nodes.
-
-How it works:
-
-1. Mark any `file` node as **Global** (or add files manually in Knowledge Base UI).
-2. Executor discovers unique KB paths (global file nodes + manual list).
-3. For each path, executor loads content through `/api/files` and concatenates it.
-4. For AI nodes:
-   - If node prompt does **not** include `{{global}}`, executor prepends the KB content automatically.
-
-## API Routes
-
-All routes live in `app/api/*`.
-
-- `POST /api/chat` — OpenRouter + **Ollama** streaming Chat Completions.
-- `GET /api/models` — fetch OpenRouter models.
-- `GET /api/files` — file tree of project.
-- `POST /api/files` — read specific file.
-- `PATCH /api/files/edit` — file editing (write/edit/append/delete) with backups.
-- `POST /api/search` — DuckDuckGo Lite web search.
-- `POST /api/search-multi` — **Multi-source search** (DuckDuckGo, SearXNG, Google, Bing, RSS) with web scraping.
-- `POST /api/knowledge/search` — **BM25 RAG search** over indexed files.
-- `PUT /api/knowledge/index` — index file for RAG.
-- `GET /api/knowledge/stats` — RAG index statistics.
-
-## Skill System (OpenClaw-style)
-
-Create reusable skills that agents can dynamically load and use during conversations.
-
-### Creating Skills
-
-Skills are stored in the `./skills` directory with the following structure:
-
-```
-skills/
-  my-skill/
-    SKILL.md
-```
-
-### SKILL.md Format
-
-Each skill uses YAML frontmatter + markdown body:
-
-```markdown
----
-name: My Skill
-description: What this skill does
-category: optional-category
----
-
-## What is this skill?
-
-Detailed description of the skill's purpose and capabilities.
-
-## How to use
-
-Step-by-step instructions for using the skill.
-
-## Examples
-
-```
-Example usage here
-```
-```
-
-### Using Skills in Chat
-
-Skills are automatically discovered and exposed as tools to the AI. The agent can call:
-
-```
-skill(skill_name="my-skill")
-```
-
-This loads the skill content and provides it to the agent for use in the conversation.
-
-### Skill Manager UI
-
-Access the Skill Manager through the Agent Constructor to:
-- Create new skills with a visual editor
-- View and manage existing skills
-- Organize skills by category
-
-### Skill Validation & Security
-
-Skills are validated before creation/update:
-- **ID validation**: Only alphanumeric characters, hyphens, and underscores allowed
-- **Required fields**: `name` and `description` are mandatory
-- **Security checks**: Detects potentially dangerous code patterns
-- **Content length**: Warns if content exceeds recommended size
-
-### API Endpoints
-
-The Skill System provides a RESTful API:
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `GET` | `/api/skills` | List all available skills |
-| `POST` | `/api/skills` | Create a new skill |
-| `PUT` | `/api/skills` | Update an existing skill |
-| `DELETE` | `/api/skills?id={id}` | Delete a skill (or all if no ID) |
-
-**Example: Create a Skill**
-```bash
-curl -X POST http://localhost:3000/api/skills \
-  -H "Content-Type: application/json" \
-  -d '{
-    "skillId": "my-skill",
-    "name": "My Skill",
-    "description": "A useful skill",
-    "category": "productivity",
-    "content": "## What is this skill?\n\n..."
-  }'
-```
-
-**Example: Update a Skill**
-```bash
-curl -X PUT http://localhost:3000/api/skills \
-  -H "Content-Type: application/json" \
-  -d '{
-    "id": "my-skill",
-    "name": "Updated Skill",
-    "description": "Updated description",
-    "content": "Updated content"
-  }'
-```
-
-**Example: Delete a Skill**
-```bash
-curl -X DELETE "http://localhost:3000/api/skills?id=my-skill"
-```
-
-## Testing
-
-The project includes comprehensive tests to ensure reliability:
-
-### Test Coverage
-
-- **Unit Tests**: Core functionality (parsing, serialization, validation)
-- **Integration Tests**: API endpoints (where applicable)
-- **Security Tests**: Input validation and sanitization
-
-### Running Tests
-
-```bash
-# Run all tests
-pnpm test
-
-# Run tests in watch mode
-pnpm test:watch
-
-# Generate coverage report
-pnpm test:coverage
-
-# Run tests with UI
-pnpm test:ui
-```
-
-### Test Structure
-
-```
-tests/
-  skills.types.test.ts      # Skill file parsing/serialization
-  skills.validation.test.ts # Skill validation logic
-  setup.ts                  # Test setup and utilities
-```
-
-### Current Coverage
-
-- Skill file parsing: ✅ 5 tests
-- Skill validation: ✅ 6 tests
-- Total: **11 tests** passing
-
-### Adding New Tests
-
-Create test files in the `tests/` directory following the existing patterns:
-
-```typescript
-import { describe, it, expect } from 'vitest';
-
-describe('My Feature', () => {
-  it('should do something', () => {
-    expect(true).toBe(true);
-  });
-});
-```
-
-## Development
-
-### Prerequisites
-
-- Node.js 18+
-- pnpm (recommended) or npm/yarn
-- Ollama (optional, for local models)
-
-### Setup
-
-1. Install dependencies:
 ```bash
 pnpm install
 ```
 
-2. Create `.env`:
-```dotenv
-OPENROUTER_API_KEY=your_key_here
-OLLAMA_BASE_URL=http://localhost:11434
-```
-
-3. Run tests:
-```bash
-pnpm test
-```
-
-4. Start dev server:
 ```bash
 pnpm dev
 ```
 
-### Tech Stack
+Откройте http://127.0.0.1:3000 → **Настройки** → вставьте ключ OpenRouter или запустите Ollama. Ключ можно задать и в `.env` (образец — `.env.example`):
 
-- **Frontend**: Next.js 16, React 19, TypeScript
-- **Styling**: Tailwind CSS, Radix UI
-- **State**: Zustand
-- **Testing**: Vitest, jsdom
-- **AI**: OpenRouter API, Ollama (local)
+```bash
+cp .env.example .env
+```
 
-## Security Notes
+Для локальных моделей:
 
-- **Never commit `.env`** with API keys
-- Skill system validates all inputs to prevent directory traversal
-- File editing endpoints should only be used in trusted environments
-- For production: Add authentication and path allowlists
+```bash
+ollama pull qwen3:8b
+```
 
-## Contributing
+Модель появится в каталоге как `ollama/qwen3:8b`.
 
-1. Write tests for new features
-2. Ensure all tests pass
-3. Update documentation
-4. Submit a PR
+### Роли моделей
 
-## License
+Агенты, шаблоны и судьи ссылаются не на конкретные модели, а на роли: **Умная**, **Основная** и **Быстрая**. По умолчанию роль сама берёт самую свежую модель подходящего семейства из каталога OpenRouter (Claude Sonnet, Gemini Flash, Flash Lite), а если ключа нет, то первую модель Ollama. В настройках роль можно закрепить за любой моделью, и замена применится везде сразу.
 
-MIT
+## Пайплайны: узлы и переменные
 
-## AI File Editing & Tools
+| Узел | Что делает |
+|---|---|
+| Вход | Запрос, с которым запускают пайплайн |
+| Агент | Вызов модели или агента из библиотеки: свой промпт, инструменты, JSON-режим, повторы и запасные модели |
+| Веб-поиск | Ищет в сети и при желании читает первые страницы выдачи |
+| База знаний | Достаёт релевантные фрагменты из ваших документов |
+| Файл / Запись в файл | Читает или пишет файл в `workspace/` |
+| Маршрутизатор | Выбирает одну ветку по смыслу (модель) или по ключевым словам |
+| Объединение | Склеивает входы по шаблону без вызова модели |
+| Проверка | Оценивает ответ по критериям и возвращает его агентам на доработку |
+| Результат | Итог пайплайна |
 
-AI in chat can use tools:
+В промптах и путях доступны переменные: `{{input}}` — исходный запрос, `{{prev}}` — выходы входящих узлов, `{{Название узла}}` — выход конкретного узла.
 
-- `list_files` — list project files.
-- `read_file` — read file.
-- `write_file` — create/overwrite file.
-- `edit_file` — edit (str_replace).
-- `delete_file` — delete file.
-- `web_search` — web search.
-- `skill` — load and use a skill by name.
+## Как устроено
 
-### Multi-step Tool Chains
+```
+app/                 страницы (Next.js App Router) и API
+  api/llm            единый потоковый шлюз к моделям (NDJSON)
+  api/tools          прямой вызов инструментов для узлов пайплайна
+  api/models|status|settings|workspace|knowledge|skills
+lib/
+  engine/            движки без привязки к UI: pipeline, debate, scenario, chat, шаблоны
+  server/            шлюз LLM с циклом инструментов, каталог, песочница, поиск, BM25, навыки
+  client/            запуск движков из браузера, лимиты, учёт расходов
+  stores/            состояние в IndexedDB (zustand)
+components/          интерфейс по разделам и общие UI-компоненты
+skills/              навыки (SKILL.md)
+workspace/           песочница файловых инструментов (не в git)
+data/                ключи и индекс знаний на сервере (не в git)
+tests/               тесты движков, сервера и утилит (vitest)
+```
 
-AI can execute chains: `list_files → delete_file(file1) → write_file(new)` — all in one request.
+Все провайдеры говорят на OpenAI-совместимом API, поэтому клиент один. Цикл «модель → инструмент → модель» выполняется на сервере, а в браузер приходят события: текст, рассуждения, вызовы инструментов, расход. Движки пайплайнов, дебатов и сценариев — чистые функции с внедряемым вызовом модели, их тесты обходятся без сети.
 
-## Smart Fallback Chain
+## Безопасность
 
-Model nodes support fallback chain:
+Приложение рассчитано на локальный запуск и слушает только `127.0.0.1`.
 
-- `fallbackModels`: backup model IDs.
-- `fallbackTimeoutMs`: timeout before fallback (default: 5000ms).
-- `fallbackMode`: `'timeout'` (time-based) or `'on_error'` (only on error).
+- Ключи хранятся на сервере (`data/settings.json` или `.env`) и в браузер не передаются.
+- Файловые инструменты не выходят за пределы `workspace/` — ни через `..`, ни через символические ссылки.
+- Чтение страниц не пускает модель в локальную сеть: веб-страница с prompt injection не сможет обратиться к API самого приложения.
+- API отклоняет запросы с чужих сайтов: открытая в браузере вкладка не может дёргать `localhost`.
 
-## Context Compression
+## Разработка
 
-Automatic compression of long contexts in model nodes:
+```bash
+pnpm check
+```
 
-- `enabled`: enable compression.
-- `thresholdTokens`: threshold (default: 1000).
-- `targetRatio`: target compression 0.0-1.0.
+Это проверка типов и 41 тест. Сборка — `pnpm build`.
 
-## Analytics & Export
+Без ключа можно работать с заглушкой модели: она отвечает правдоподобным текстом и нужными JSON-форматами.
 
-- **Waterfall/Gantt**: pipeline execution visualization.
-- **Export**: PDF and CSV reports.
-- **Metrics**: prompt/completion tokens, cost, latency.
+```bash
+HEPHAESTUS_MOCK_LLM=1 pnpm dev
+```
 
-## Troubleshooting
+## Что изменилось в 2.0
 
-### `OPENROUTER_API_KEY is missing`
+Проект переписан с нуля, идея сохранена: несколько моделей работают вместе. Исправлено:
 
-- Ensure `.env` exists in project root and contains `OPENROUTER_API_KEY`.
-- Restart dev server after editing `.env`.
+- **Двойная оплата.** Каждый запрос в чат уходил в OpenRouter дважды.
+- **Сжатие контекста и «умное чтение» файлов не работали:** они ждали JSON, а API отдавал поток.
+- **Симулятор событий** обращался к API по относительному адресу с сервера и не мог работать.
+- **Цены** считались по грубой оценке. Теперь используется реальная стоимость из ответа провайдера.
+- **Файлы.** ИИ мог переписывать исходники самого приложения. Теперь он работает только в `workspace/`.
+- **Хранилище.** Данные хранились в localStorage, который переполняется. Теперь в IndexedDB с отложенной записью.
+- **Интерфейс** был смесью русского и английского, теперь полностью на русском.
 
-### Ollama Connection Refused
-
-- Ensure Ollama is running: `ollama list`
-- Check `OLLAMA_BASE_URL` in `.env` (default: `http://localhost:11434`)
-
-### Rate Limits (429)
-
-- The executor retries with backoff, but heavy parallel pipelines can still hit limits.
-- Reduce parallel nodes or simplify the graph.
-
-### Web Search Failures
-
-- DuckDuckGo Lite sometimes blocks/changes markup.
-- If search results return `[Search failed: ...]`, disable `webSearch` for the model.
-
-## Security Notes (Important)
-
-- **Never commit `.env`**. Your OpenRouter key must be treated as a secret.
-- The `/api/files` and `/api/files/edit` endpoints can read and modify **any file within the project root**.
-- This is fine for local development, but **unsafe for public deployments**.
-- For production: add auth + path allowlist.
-
-## Roadmap Ideas
-
-- Auth + per-user storage
-- Hard allowlist for file reading (KB)
-- Better cost accuracy by consuming provider usage fields
-- Export/share pipeline presets
-- Real embedding models (OpenAI/Nomic) for RAG
-- Multi-scenario event simulation (optimistic/pessimistic/baseline)
-
----
-
-If you want, I can also:
-
-- add a `README` section for deployment (Vercel/Node server)
-- harden `/api/files` and remove secrets exposure
-- add a sample pipeline JSON and recommended node patterns
+Telegram-бот, интеграции (Slack, Notion, Trello, почта), триггеры и мультимодальные экраны убраны: они почти не были связаны с ядром. Их роль выполняют инструменты (поиск, файлы, знания, навыки), к которым легко добавить новые. Данные версии 1.x (localStorage `arena-storage`) не переносятся.
