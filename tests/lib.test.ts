@@ -94,12 +94,14 @@ describe('модели', () => {
       { id: 'google/gemini-2.5-flash', name: '', provider: 'openrouter', vendor: 'google', pricing: paid, supportsTools: true, created: 9 },
       { id: 'nvidia/nemotron-3-ultra-550b-a55b:free', name: '', provider: 'openrouter', vendor: 'nvidia', pricing: free, supportsTools: true, created: 5 },
       { id: 'google/gemma-4-31b-it:free', name: '', provider: 'openrouter', vendor: 'google', pricing: free, supportsTools: true, created: 4 },
+      { id: 'nvidia/nemotron-3.5-super-vl:free', name: '', provider: 'openrouter', vendor: 'nvidia', pricing: free, supportsTools: true, created: 4 },
       { id: 'google/gemma-4-26b-a4b-it:free', name: '', provider: 'openrouter', vendor: 'google', pricing: free, supportsTools: true, created: 4 },
       // псевдоним с :free в ID, но ненулевой ценой — не годится
       { id: 'poolside/laguna-xs-2.1:free', name: '', provider: 'openrouter', vendor: 'poolside', pricing: paid, supportsTools: true, created: 6 },
     ]
     expect(pickAliasModel('@smart', cat, true)).toBe('nvidia/nemotron-3-ultra-550b-a55b:free')
-    expect(pickAliasModel('@default', cat, true)).toBe('google/gemma-4-31b-it:free')
+    expect(pickAliasModel('@default', cat, true)).toBe('nvidia/nemotron-3.5-super-vl:free')
+    expect(pickAliasModel('@default', cat.filter((m) => !m.id.includes('super')), true)).toBe('google/gemma-4-31b-it:free')
     expect(pickAliasModel('@fast', cat, true)).toBe('google/gemma-4-26b-a4b-it:free')
     expect(pickAliasModel('@smart', cat)).toBe('anthropic/claude-sonnet-4.5')
     // ни одного шаблона не нашлось — свежая бесплатная модель с инструментами, но не платная

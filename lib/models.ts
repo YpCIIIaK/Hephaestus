@@ -111,7 +111,7 @@ const ALIAS_PATTERNS: Record<ModelAlias, RegExp[]> = {
 // Порядок важен: сначала крупные модели с инструментами, затем быстрые.
 const FREE_ALIAS_PATTERNS: Record<ModelAlias, RegExp[]> = {
   '@smart': [/^nvidia\/nemotron-[\d.]+-ultra[^:]*:free$/, /^google\/gemma-[\d.]+-31b[^:]*:free$/],
-  '@default': [/^google\/gemma-[\d.]+-31b[^:]*:free$/, /^nvidia\/nemotron-[\d.]+-super[^:]*:free$/],
+  '@default': [/^nvidia\/nemotron-[\d.]+-super[^:]*:free$/, /^google\/gemma-[\d.]+-31b[^:]*:free$/],
   '@fast': [/^poolside\/laguna-xs[^:]*:free$/, /^google\/gemma-[\d.]+-26b[^:]*:free$/],
 }
 
