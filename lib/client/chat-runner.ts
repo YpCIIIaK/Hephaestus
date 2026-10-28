@@ -1,7 +1,7 @@
 'use client'
 
 import { create } from 'zustand'
-import { buildChatMessages, buildJudgeMessages, buildTitleMessages, fallbackTitle, parseJudge, targetKey, userContent, type ChatReply, type ChatTarget, type ChatTurn, type Conversation } from '../engine/chat'
+import { buildChatMessages, buildJudgeMessages, buildTitleMessages, fallbackTitle, parseJudge, parseTitle, targetKey, userContent, type ChatReply, type ChatTarget, type ChatTurn, type Conversation } from '../engine/chat'
 import { runPipeline } from '../engine/pipeline'
 import { shortModelName } from '../models'
 import { getAgent } from '../stores/agents'
@@ -219,8 +219,8 @@ async function autoTitle(convId: string) {
   useChats.getState().patch(convId, { title: fallbackTitle(first) })
   if (!useSettings.getState().chat.autoTitle) return
   const res = await callLLM({ model: '@fast', messages: buildTitleMessages(first), temperature: 0.3, maxTokens: 30 }, { meta: { source: 'system', label: 'Заголовок чата' } })
-  const title = res.text.replace(/["«»\n]/g, '').trim()
-  if (!res.error && title && title.length < 80) useChats.getState().patch(convId, { title })
+  const title = res.error ? null : parseTitle(res.text)
+  if (title) useChats.getState().patch(convId, { title })
 }
 
 export async function sendMessage(convId: string, text: string, attachments: { name: string; content: string }[] = []) {

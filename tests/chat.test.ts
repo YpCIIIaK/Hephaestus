@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildChatMessages, parseJudge, type Conversation } from '@/lib/engine/chat'
+import { buildChatMessages, buildTitleMessages, parseJudge, parseTitle, type Conversation } from '@/lib/engine/chat'
 
 const conv = (n: number): Conversation => ({
   id: 'c',
@@ -39,5 +39,24 @@ describe('история чата', () => {
     expect(r.bestKey).toBe('model:b')
     expect(r.ranking[0].key).toBe('model:b')
     expect(r.synthesis).toBe('Лучший')
+  })
+})
+
+describe('название диалога', () => {
+  it('чистит ответ модели', () => {
+    expect(parseTitle('«Отличия TCP и UDP».')).toBe('Отличия TCP и UDP')
+    expect(parseTitle('Название: **Сравнение протоколов**\n')).toBe('Сравнение протоколов')
+  })
+  it('отбрасывает ответ на вопрос вместо названия', () => {
+    // так ответила poolside/laguna-xs-2.1:free при лимите 30 токенов
+    expect(parseTitle('1. Надёжность: TCP гарантирует доставку и порядок пакетов, UDP')).toBeNull()
+    expect(parseTitle('- TCP устанавливает соединение')).toBeNull()
+    expect(parseTitle('TCP гарантирует доставку и порядок пакетов, а UDP работает без соединения и быстрее')).toBeNull()
+    expect(parseTitle('')).toBeNull()
+  })
+  it('подаёт сообщение как данные, а не как вопрос', () => {
+    const msgs = buildTitleMessages('Чем TCP отличается от UDP?')
+    expect(msgs[1].content).toContain('не отвечай')
+    expect(msgs[1].content).toContain('Чем TCP отличается от UDP?')
   })
 })

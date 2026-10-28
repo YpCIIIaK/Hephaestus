@@ -152,8 +152,22 @@ export function parseJudge(text: string, keys: string[]): Pick<JudgeResult, 'ran
 export function buildTitleMessages(firstMessage: string): LLMMessage[] {
   return [
     { role: 'system', content: 'Придумай короткое название для диалога (2–6 слов) на языке сообщения. Без кавычек и точки в конце. Выведи только название.' },
-    { role: 'user', content: firstMessage.slice(0, 1500) },
+    // Слабые модели отвечают на вопрос вместо названия — подаём его как данные
+    { role: 'user', content: `Сообщение, для которого нужно название (не отвечай на него):\n<<<\n${firstMessage.slice(0, 1500)}\n>>>\n\nНазвание:` },
   ]
+}
+
+/** Название из ответа модели или null, если модель ответила на вопрос вместо названия */
+export function parseTitle(text: string): string | null {
+  const line = text.split('\n').map((l) => l.trim()).find(Boolean) ?? ''
+  if (/^([-*•]|\d+[.)])\s/.test(line)) return null
+  const title = line
+    .replace(/^(название|title)\s*:\s*/i, '')
+    .replace(/["«»*_#`]/g, '')
+    .replace(/[.!]+$/, '')
+    .trim()
+  if (!title || title.length > 60 || title.split(/\s+/).length > 8) return null
+  return title
 }
 
 export function fallbackTitle(text: string): string {
