@@ -1,237 +1,146 @@
-export type NodeStatus = 'idle' | 'running' | 'completed' | 'error' | 'skipped'
+// Общие типы, которые используют и сервер, и клиент.
 
-export interface PipelineStep {
-  nodeId: string
-  label: string
-  type: string
-  status: NodeStatus
-  result?: string
-  tokens?: number
-  latencyMs?: number
-  startTime?: number
-  endTime?: number
-  modelId?: string
-  modelName?: string
-  promptTokens?: number
-  completionTokens?: number
-  promptCost?: number
-  completionCost?: number
-}
+// ─── Модели ──────────────────────────────────────────────────────────────
 
-export interface Model {
+export type ProviderId = 'openrouter' | 'ollama' | 'custom'
+
+export interface ModelInfo {
   id: string
   name: string
-  provider: 'openai' | 'anthropic' | 'google' | 'meta' | 'mistral' | 'custom'
-  description: string
-  enabled: boolean
-  level: number
-  systemPrompt?: string
+  provider: ProviderId
+  /** Компания-разработчик: openai, anthropic, google… */
+  vendor: string
+  description?: string
+  contextLength?: number
+  /** Цена в долларах за один токен */
+  pricing?: { prompt: number; completion: number }
+  supportsTools?: boolean
+  supportsReasoning?: boolean
+  /** Unix-время публикации модели (у OpenRouter) */
+  created?: number
+}
+
+/** Псевдонимы моделей: агенты и шаблоны ссылаются на роль, а не на конкретную модель */
+export type ModelAlias = '@smart' | '@default' | '@fast'
+
+// ─── Сообщения и вызовы LLM ─────────────────────────────────────────────
+
+export interface ToolCall {
+  id: string
+  type: 'function'
+  function: { name: string; arguments: string }
+}
+
+export interface LLMMessage {
+  role: 'system' | 'user' | 'assistant' | 'tool'
+  content: string | null
+  tool_calls?: ToolCall[]
+  tool_call_id?: string
+  name?: string
+}
+
+/** Наборы инструментов, которые можно выдать модели */
+export type ToolsetId = 'web' | 'files_read' | 'files_write' | 'knowledge' | 'skills'
+
+export interface LLMRequest {
+  model: string
+  messages: LLMMessage[]
   temperature?: number
   maxTokens?: number
-  webSearch?: boolean
-  pricing?: {
-    prompt: number
-    completion: number
-    request: number
-  }
-  fallbackModels?: string[]
-  fallbackMode?: 'timeout' | 'on_error'
-  fallbackTimeoutMs?: number
+  tools?: ToolsetId[]
+  jsonMode?: boolean
+  /** Максимум шагов цикла «модель → инструмент → модель» */
+  maxToolSteps?: number
 }
 
-export interface ArenaNode {
+export interface Usage {
+  promptTokens: number
+  completionTokens: number
+  /** Стоимость в долларах; null, если провайдер её не сообщил и цены неизвестны */
+  cost: number | null
+}
+
+/** События потокового ответа /api/llm (NDJSON, одно событие на строку) */
+export type LLMEvent =
+  | { t: 'text'; v: string }
+  | { t: 'reasoning'; v: string }
+  | { t: 'tool_call'; id: string; name: string; args: string }
+  | { t: 'tool_result'; id: string; name: string; ok: boolean; preview: string }
+  | { t: 'notice'; v: string }
+  | { t: 'usage'; usage: Usage; model: string }
+  | { t: 'error'; message: string; status?: number }
+  | { t: 'done'; finish: string }
+
+export interface ToolTrace {
   id: string
-  type: 'prompt' | 'model' | 'validator' | 'aggregator' | 'search' | 'file' | 'router' | 'code' | 'classifier' | 'analyst' | 'researcher' | 'synthesizer' | 'summarizer'
-  label: string
-  data: {
-    prompt?: string
-    model?: Model
-    filePath?: string
-    isGlobal?: boolean
-    result?: string
-    status?: NodeStatus
-    maxTokens?: number
-    temperature?: number
-    systemPrompt?: string
-    agentPresetId?: string
-    agentRole?: string
-    agentDomain?: string
-    jsonMode?: boolean
-    jsonSchema?: string
-    contextCompression?: {
-      enabled: boolean
-      thresholdTokens: number
-      targetRatio?: number
-      modelId?: string
-    }
-    fallbackModels?: string[]
-    fallbackMode?: 'timeout' | 'on_error'
-    fallbackTimeoutMs?: number
-    searchQuery?: string
-    codeAction?: 'write' | 'edit' | 'append' | 'delete'
-    codePath?: string
-    codeContent?: string
-    // File node extra props
-    isSmartRead?: boolean
-    smartQuery?: string
-    maxLines?: number
-    // Search node extra props
-    maxResults?: number
-    searchSources?: ('duckduckgo' | 'searxng' | 'google' | 'bing' | 'rss')[]
-    scrapeContent?: boolean
-    searchLanguage?: string
-    rssFeeds?: string[]
-    // Router node extra props
-    routingPrompt?: string
-    routingMap?: Record<string, string>
-    // Validator node extra props
-    validationType?: string
-    // Code node extra props
-    codeOperation?: string
-    targetFilePath?: string
-    useAI?: boolean
-    // Label stored in data for quick access
-    label?: string
-  }
+  name: string
+  args: string
+  ok?: boolean
+  preview?: string
 }
 
-export interface ArenaEdge {
-  id: string
-  source: string
-  target: string
-  type: 'data' | 'validation' | 'feedback'
+export interface LLMResult {
+  text: string
+  reasoning: string
+  tools: ToolTrace[]
+  usage: Usage
+  model: string
+  latencyMs: number
+  error?: string
+  aborted?: boolean
 }
 
-export interface ChatMessage {
-  id: string
-  role: 'user' | 'assistant'
-  content: string
-  modelId?: string
-  modelName?: string
-  timestamp: string
+// ─── Статус сервера ──────────────────────────────────────────────────────
+
+export interface ServerStatus {
+  openrouter: { configured: boolean; source: 'settings' | 'env' | null; masked?: string }
+  ollama: { url: string; reachable: boolean; models: number }
+  custom: { url: string | null; configured: boolean }
+  searxng: boolean
+  workspace: string
 }
 
-export interface ModelResponse {
-  id: string
-  modelId: string
-  modelName: string
-  messageId?: string
-  content: string
-  status: 'pending' | 'streaming' | 'complete' | 'error'
-  tokens?: number
-  latency?: number
-  isCollapsed?: boolean
-  collapsedStepIds?: string[]
-  pipelineSteps?: PipelineStep[]
-  billedNodeIds?: string[]
-}
+// ─── Навыки ──────────────────────────────────────────────────────────────
 
-export interface ArenaConfig {
+export interface SkillMeta {
   id: string
   name: string
   description: string
-  nodes: ArenaNode[]
-  edges: ArenaEdge[]
-  knowledgeBase?: string[]
-  createdAt: string
+  category?: string
+}
+
+export interface Skill extends SkillMeta {
+  content: string
   updatedAt: string
 }
 
-export interface HistoricalChat {
+// ─── База знаний ─────────────────────────────────────────────────────────
+
+export interface KnowledgeDoc {
   id: string
   title: string
-  messages: ChatMessage[]
-  responses: ModelResponse[]
-  date: string
-}
-
-export interface UsageEvent {
-  id: string
-  timestamp: string
-  modelId: string
-  modelName: string
+  source: 'workspace' | 'upload' | 'text'
+  path?: string
+  chunks: number
   tokens: number
-  cost: number
-  type: 'chat' | 'pipeline' | 'error'
+  indexedAt: string
 }
 
-// Telegram Bot Types
-export interface TelegramUser {
-  id: number
-  username?: string
-  firstName?: string
-  lastName?: string
-  firstSeen: string
-  lastActive: string
-  messageCount: number
-  photoCount: number
-  documentCount: number
-  voiceCount: number
+export interface KnowledgeHit {
+  docId: string
+  title: string
+  text: string
+  score: number
+  startLine: number
+  endLine: number
 }
 
-export interface TelegramMessage {
-  id: string
-  userId: number
-  type: 'text' | 'photo' | 'document' | 'voice' | 'command'
-  content: string
-  timestamp: string
-  responseTime?: number
-  responseTokens?: number
-  status: 'success' | 'error' | 'pending'
-}
+// ─── Workspace ───────────────────────────────────────────────────────────
 
-export interface TelegramStats {
-  totalUsers: number
-  activeUsers24h: number
-  totalMessages: number
-  messagesByType: { text: number; photo: number; document: number; voice: number; command: number }
-  avgResponseTime: number
-  totalTokens: number
-  totalCost: number
-  topCommands: Array<{ command: string; count: number }>
-  messagesPerHour: Array<{ hour: number; count: number }>
-  errors24h: number
-}
-
-// Multi-LLM Arena Chat / Debate Types
-export interface ArenaChatMessage {
-  id: string
-  role: 'user' | 'assistant' | 'system'
-  content: string
-  modelId?: string      // который ответил (для assistant)
-  modelName?: string
-  turn: number          // номер хода
-  timestamp: string
-}
-
-export interface DebateModel {
-  id: string
+export interface WorkspaceEntry {
+  path: string
   name: string
-  provider?: string
-  temperature?: number
-  maxTokens?: number
-  custom?: boolean      // добавлена пользователем вручную
-}
-
-export interface ArenaChatConfig {
-  participants: DebateModel[]    // модели-участники с полной информацией
-  topic: string                  // тема обсуждения
-  systemPrompt?: string          // общий системный промпт
-  perModelSystemPrompt?: Record<string, string>  // индивидуальный промпт для каждой модели
-  maxRounds: number              // максимальное количество раундов
-  visibleMessagesPerModel: number // сколько последних сообщений каждой модели показывать в контексте
-  mode: 'debate' | 'collaboration' | 'sequential'  // режим общения
-  includeUserInLoop: boolean     // может ли пользователь вмешиваться между раундами
-  contextMode: 'full' | 'last_round' | 'topic_only' // какой контекст видят модели
-}
-
-export interface ArenaChatSession {
-  id: string
-  config: ArenaChatConfig
-  messages: ArenaChatMessage[]
-  perModelHistory: Record<string, ArenaChatMessage[]>  // история диалога для каждой модели отдельно
-  currentRound: number
-  isRunning: boolean
-  createdAt: string
-  updatedAt: string
+  type: 'file' | 'dir'
+  size?: number
+  children?: WorkspaceEntry[]
 }

@@ -1,241 +1,43 @@
-import { NextResponse } from 'next/server';
-import fs from 'fs';
-import path from 'path';
-import { parseSkillFile, serializeSkillFile } from '@/lib/skills/types';
+import { NextResponse } from 'next/server'
+import { z } from 'zod'
+import { errorMessage, jsonError, parseBody, rejectCrossSite } from '@/lib/server/http'
+import { deleteSkill, listSkills, saveSkill } from '@/lib/server/skills'
 
-// Skills directory - using project root skills folder
-const SKILLS_DIR = path.join(process.cwd(), 'skills');
+export const dynamic = 'force-dynamic'
 
-/** GET all skills or single skill by ID */
-export async function GET(req: Request) {
-  try {
-    const { searchParams } = new URL(req.url);
-    const id = searchParams.get('id');
-
-    if (id) {
-      // Fetch single skill with full content
-      const skillDir = path.join(SKILLS_DIR, id);
-      const skillMarkdownPath = path.join(skillDir, 'SKILL.md');
-
-      if (!fs.existsSync(skillMarkdownPath)) {
-        return NextResponse.json({ error: `Skill '${id}' not found` }, { status: 404 });
-      }
-
-      const content = fs.readFileSync(skillMarkdownPath, 'utf-8');
-      const parsed = parseSkillFile(content);
-
-      if (!parsed) {
-        return NextResponse.json({ error: `Failed to parse skill '${id}'` }, { status: 500 });
-      }
-
-      return NextResponse.json({
-        skill: {
-          id,
-          name: parsed.metadata.name,
-          description: parsed.metadata.description,
-          category: parsed.metadata.category,
-          content: parsed.content,
-          updatedAt: fs.statSync(skillMarkdownPath).mtime.toISOString(),
-        },
-      });
-    }
-
-    const skillsList: any[] = [];
-
-    if (fs.existsSync(SKILLS_DIR)) {
-      const entries = fs.readdirSync(SKILLS_DIR, { withFileTypes: true });
-
-      for (const entry of entries) {
-        if (entry.isDirectory()) {
-          const skillId = entry.name;
-          const skillMarkdownPath = path.join(SKILLS_DIR, skillId, 'SKILL.md');
-
-          if (fs.existsSync(skillMarkdownPath)) {
-            const content = fs.readFileSync(skillMarkdownPath, 'utf-8');
-            const parsed = parseSkillFile(content);
-
-            if (parsed) {
-              skillsList.push({
-                id: skillId,
-                name: parsed.metadata.name,
-                description: parsed.metadata.description,
-                category: parsed.metadata.category,
-                updatedAt: fs.statSync(skillMarkdownPath).mtime.toISOString(),
-              });
-            }
-          }
-        }
-      }
-    }
-
-    return NextResponse.json({ skills: skillsList });
-  } catch (error) {
-    console.error('Error listing skills:', error);
-    return NextResponse.json({ error: 'Failed to list skills' }, { status: 500 });
-  }
+export async function GET() {
+  return NextResponse.json({ skills: await listSkills() })
 }
 
-/** POST create new skill */
+const schema = z.object({
+  id: z.string().max(64).optional(),
+  name: z.string().min(1).max(120),
+  description: z.string().max(500),
+  category: z.string().max(60).optional(),
+  content: z.string().min(1).max(200_000),
+})
+
 export async function POST(req: Request) {
+  const denied = rejectCrossSite(req)
+  if (denied) return denied
+  const parsed = await parseBody(req, schema)
+  if ('error' in parsed) return parsed.error
   try {
-    const { skillId, name, description, category, content } = await req.json();
-
-    if (!skillId || !name || !description || content === undefined) {
-      return NextResponse.json(
-        { error: 'Missing required fields: skillId, name, description, content' },
-        { status: 400 }
-      );
-    }
-
-    // Validate skillId (alphanumeric + hyphens/underscores)
-    if (!/^[a-zA-Z0-9_-]+$/.test(skillId)) {
-      return NextResponse.json(
-        { error: 'Invalid skillId. Use only letters, numbers, hyphens, and underscores' },
-        { status: 400 }
-      );
-    }
-
-    // Ensure skills directory exists
-    if (!fs.existsSync(SKILLS_DIR)) {
-      console.log(`[Skills] Creating skills directory: ${SKILLS_DIR}`);
-      fs.mkdirSync(SKILLS_DIR, { recursive: true });
-    }
-
-    const skillDir = path.join(SKILLS_DIR, skillId);
-    const skillFilePath = path.join(skillDir, 'SKILL.md');
-
-    // Security check: prevent directory traversal
-    if (!skillDir.startsWith(path.resolve(SKILLS_DIR))) {
-      console.error(`[Skills] Invalid path detected: ${skillDir}`);
-      return NextResponse.json(
-        { error: 'Invalid skill ID' },
-        { status: 400 }
-      );
-    }
-
-    // Check if skill already exists
-    if (fs.existsSync(skillFilePath)) {
-      return NextResponse.json(
-        { error: `Skill '${skillId}' already exists` },
-        { status: 409 }
-      );
-    }
-
-    // Create skill directory
-    console.log(`[Skills] Creating skill directory: ${skillDir}`);
-    fs.mkdirSync(skillDir, { recursive: true });
-
-    // Serialize skill file
-    const fileContent = serializeSkillFile({
-      metadata: { name, description, category },
-      content,
-    });
-
-    // Write file
-    console.log(`[Skills] Writing skill file: ${skillFilePath}`);
-    fs.writeFileSync(skillFilePath, fileContent, 'utf-8');
-
-    // Verify file was created
-    if (!fs.existsSync(skillFilePath)) {
-      throw new Error('Failed to create skill file');
-    }
-
-    console.log(`[Skills] Skill created successfully: ${skillId}`);
-
-    return NextResponse.json({
-      success: true,
-      skill: {
-        id: skillId,
-        name,
-        description,
-        category,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      },
-    });
-  } catch (error: any) {
-    console.error('[Skills] Error creating skill:', error);
-    console.error('[Skills] Error stack:', error.stack);
-    return NextResponse.json(
-      { 
-        error: 'Failed to create skill',
-        details: error.message 
-      }, 
-      { status: 500 }
-    );
+    return NextResponse.json({ skill: await saveSkill(parsed.data) })
+  } catch (e) {
+    return jsonError(errorMessage(e), 500)
   }
 }
 
-/** PUT update existing skill by ID */
-export async function PUT(req: Request) {
-  try {
-    const { id, name, description, category, content } = await req.json();
-
-    if (!id || !name || !description || content === undefined) {
-      return NextResponse.json(
-        { error: 'Missing required fields: id, name, description, content' },
-        { status: 400 }
-      );
-    }
-
-    const skillDir = path.join(SKILLS_DIR, id);
-    const skillFilePath = path.join(skillDir, 'SKILL.md');
-
-    if (!fs.existsSync(skillFilePath)) {
-      return NextResponse.json(
-        { error: `Skill '${id}' not found` },
-        { status: 404 }
-      );
-    }
-
-    const fileContent = serializeSkillFile({
-      metadata: { name, description, category },
-      content,
-    });
-
-    fs.writeFileSync(skillFilePath, fileContent, 'utf-8');
-
-    return NextResponse.json({
-      success: true,
-      skill: {
-        id,
-        name,
-        description,
-        category,
-        updatedAt: new Date().toISOString(),
-      },
-    });
-  } catch (error) {
-    console.error('Error updating skill:', error);
-    return NextResponse.json({ error: 'Failed to update skill' }, { status: 500 });
-  }
-}
-
-/** DELETE a specific skill by ID */
 export async function DELETE(req: Request) {
+  const denied = rejectCrossSite(req)
+  if (denied) return denied
+  const id = new URL(req.url).searchParams.get('id')
+  if (!id) return jsonError('Не указан id')
   try {
-    const { searchParams } = new URL(req.url);
-    const id = searchParams.get('id');
-
-    if (!id) {
-      // If no id provided, delete all skills (for cleanup)
-      if (fs.existsSync(SKILLS_DIR)) {
-        fs.rmSync(SKILLS_DIR, { recursive: true });
-      }
-      return NextResponse.json({ success: true, message: 'All skills deleted' });
-    }
-
-    const skillDir = path.join(SKILLS_DIR, id);
-    
-    if (!fs.existsSync(skillDir)) {
-      return NextResponse.json({ error: `Skill '${id}' not found` }, { status: 404 });
-    }
-
-    fs.rmSync(skillDir, { recursive: true });
-    
-    return NextResponse.json({ success: true, message: `Skill '${id}' deleted` });
-  } catch (error) {
-    console.error('Error deleting skill:', error);
-    return NextResponse.json({ error: 'Failed to delete skill' }, { status: 500 });
+    await deleteSkill(id)
+    return NextResponse.json({ ok: true })
+  } catch (e) {
+    return jsonError(errorMessage(e))
   }
 }
