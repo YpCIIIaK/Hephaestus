@@ -8,7 +8,7 @@ process.env.HEPHAESTUS_WORKSPACE = dir
 
 const ws = await import('@/lib/server/workspace')
 const { runTool } = await import('@/lib/server/tools')
-const { parseDdgLite, htmlToText, assertPublicUrl } = await import('@/lib/server/web')
+const { parseDdgLite, htmlToText, assertPublicUrl, isDdgBlocked } = await import('@/lib/server/web')
 const { parseSkill, serializeSkill, slugify } = await import('@/lib/server/skills')
 
 describe('workspace', () => {
@@ -49,6 +49,15 @@ describe('веб', () => {
     const html = `<table><tr><td><a rel="nofollow" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fexample.com%2Fpage&amp;rut=x" class='result-link'>Example &amp; Co</a></td></tr>
       <tr><td class='result-snippet'>Some <b>snippet</b></td></tr></table>`
     expect(parseDdgLite(html, 5)).toEqual([{ title: 'Example & Co', url: 'https://example.com/page', snippet: 'Some snippet' }])
+  })
+  it('отличает антибот-проверку DuckDuckGo от пустой выдачи', () => {
+    // так DuckDuckGo Lite ответил после серии запросов: HTTP 202 и страница с капчей
+    const challenge = '<form id="challenge-form"><div class="anomaly-modal__box"><div class="anomaly-modal__description">bots</div></div></form>'
+    expect(isDdgBlocked(202, challenge)).toBe(true)
+    expect(isDdgBlocked(200, challenge)).toBe(true)
+    expect(isDdgBlocked(202, '<html></html>')).toBe(true)
+    expect(isDdgBlocked(200, '<table><tr><td>No results.</td></tr></table>')).toBe(false)
+    expect(isDdgBlocked(200, "<a class='result-link' href='https://a.ru'>A</a>")).toBe(false)
   })
   it('превращает HTML в текст', () => {
     const r = htmlToText('<title>T</title><script>x()</script><h2>Заголовок</h2><p>Текст&nbsp;тут</p><ul><li>a</li></ul>')

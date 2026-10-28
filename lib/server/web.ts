@@ -66,7 +66,17 @@ async function searchDdg(query: string, max: number, signal?: AbortSignal): Prom
     signal,
   })
   if (!res.ok) throw new Error(`DuckDuckGo ответил ${res.status}`)
-  return parseDdgLite(await res.text(), max)
+  const html = await res.text()
+  // Вместо выдачи DuckDuckGo может вернуть антибот-проверку (HTTP 202) —
+  // это не «ничего не найдено», иначе модель решит, что источников нет
+  if (isDdgBlocked(res.status, html)) {
+    throw new Error('DuckDuckGo временно заблокировал поиск (антибот-проверка). Повторите позже или укажите свой SearXNG в .env (SEARXNG_URL)')
+  }
+  return parseDdgLite(html, max)
+}
+
+export function isDdgBlocked(status: number, html: string): boolean {
+  return /anomaly-modal/.test(html) || (status === 202 && !/result-link/.test(html))
 }
 
 async function searchSearx(base: string, query: string, max: number, signal?: AbortSignal): Promise<SearchResult[]> {
