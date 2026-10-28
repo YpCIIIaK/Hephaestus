@@ -1,0 +1,392 @@
+@import 'tailwindcss';
+@import 'tw-animate-css';
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* ─── Палитра «Кузница»: тёплый графит и раскалённый металл ─────────────── */
+
+:root {
+  --bg: oklch(0.985 0.004 80);
+  --surface: oklch(1 0 0);
+  --surface-2: oklch(0.965 0.006 80);
+  --surface-3: oklch(0.935 0.008 75);
+  --border: oklch(0.9 0.008 75);
+  --border-strong: oklch(0.82 0.01 70);
+  --fg: oklch(0.22 0.012 60);
+  --muted: oklch(0.5 0.012 60);
+  --faint: oklch(0.64 0.01 65);
+  --accent: oklch(0.63 0.19 42);
+  --accent-hover: oklch(0.58 0.19 40);
+  --accent-fg: oklch(0.99 0.01 80);
+  --accent-soft: oklch(0.63 0.19 42 / 0.1);
+  --gold: oklch(0.68 0.14 75);
+  --success: oklch(0.58 0.14 155);
+  --warning: oklch(0.68 0.15 70);
+  --danger: oklch(0.57 0.2 27);
+  --info: oklch(0.56 0.13 245);
+  --ring: oklch(0.63 0.19 42 / 0.45);
+  --shadow: 0 1px 2px oklch(0.2 0.02 60 / 0.06), 0 4px 16px oklch(0.2 0.02 60 / 0.06);
+  --shadow-lg: 0 8px 40px oklch(0.2 0.02 60 / 0.14);
+
+  /* Цвета участников: различимы и в светлой, и в тёмной теме */
+  --p1: oklch(0.63 0.19 42);
+  --p2: oklch(0.58 0.12 190);
+  --p3: oklch(0.55 0.18 290);
+  --p4: oklch(0.58 0.15 245);
+  --p5: oklch(0.6 0.19 5);
+  --p6: oklch(0.6 0.15 135);
+  --p7: oklch(0.66 0.15 80);
+  --p8: oklch(0.58 0.2 330);
+
+  /* Палитра графиков: проверена на различимость при дальтонизме и контраст */
+  --chart-1: #2a78d6;
+  --chart-2: #eb6834;
+  --chart-3: #1baf7a;
+  --chart-4: #eda100;
+  --chart-5: #e87ba4;
+  --chart-6: #008300;
+}
+
+.dark {
+  --bg: oklch(0.16 0.006 60);
+  --surface: oklch(0.195 0.007 60);
+  --surface-2: oklch(0.225 0.008 60);
+  --surface-3: oklch(0.26 0.009 60);
+  --border: oklch(0.285 0.009 60);
+  --border-strong: oklch(0.36 0.01 60);
+  --fg: oklch(0.94 0.008 80);
+  --muted: oklch(0.7 0.012 70);
+  --faint: oklch(0.55 0.01 65);
+  --accent: oklch(0.73 0.17 50);
+  --accent-hover: oklch(0.78 0.16 55);
+  --accent-fg: oklch(0.17 0.02 50);
+  --accent-soft: oklch(0.73 0.17 50 / 0.13);
+  --gold: oklch(0.83 0.13 85);
+  --success: oklch(0.74 0.14 155);
+  --warning: oklch(0.8 0.14 80);
+  --danger: oklch(0.68 0.19 25);
+  --info: oklch(0.72 0.12 240);
+  --ring: oklch(0.73 0.17 50 / 0.5);
+  --shadow: 0 1px 2px oklch(0 0 0 / 0.3), 0 4px 16px oklch(0 0 0 / 0.25);
+  --shadow-lg: 0 12px 48px oklch(0 0 0 / 0.5);
+
+  --p1: oklch(0.74 0.16 50);
+  --p2: oklch(0.76 0.12 185);
+  --p3: oklch(0.72 0.15 295);
+  --p4: oklch(0.74 0.13 245);
+  --p5: oklch(0.72 0.17 10);
+  --p6: oklch(0.78 0.16 135);
+  --p7: oklch(0.83 0.14 85);
+  --p8: oklch(0.72 0.18 330);
+
+  --chart-1: #3987e5;
+  --chart-2: #d95926;
+  --chart-3: #199e70;
+  --chart-4: #c98500;
+  --chart-5: #d55181;
+  --chart-6: #008300;
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-fg: var(--fg);
+  --color-muted: var(--muted);
+  --color-faint: var(--faint);
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-accent-fg: var(--accent-fg);
+  --color-accent-soft: var(--accent-soft);
+  --color-gold: var(--gold);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-danger: var(--danger);
+  --color-info: var(--info);
+  --color-ring: var(--ring);
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
+  --shadow-soft: var(--shadow);
+  --shadow-float: var(--shadow-lg);
+  --radius-xl: 0.875rem;
+  --radius-2xl: 1.125rem;
+}
+
+@layer base {
+  * {
+    border-color: var(--border);
+  }
+  html {
+    color-scheme: light;
+  }
+  html.dark {
+    color-scheme: dark;
+  }
+  body {
+    background: var(--bg);
+    color: var(--fg);
+    font-feature-settings: 'cv11', 'ss01';
+    -webkit-font-smoothing: antialiased;
+  }
+  ::selection {
+    background: var(--accent-soft);
+  }
+  :focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
+  button:not(:disabled),
+  [role='button']:not([aria-disabled='true']) {
+    cursor: pointer;
+  }
+}
+
+/* Тонкие полосы прокрутки */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+
+/* Свечение раскалённого металла — фирменная деталь */
+.forge-glow {
+  background:
+    radial-gradient(1200px 400px at 0% -10%, oklch(0.73 0.17 50 / 0.09), transparent 60%),
+    radial-gradient(800px 300px at 100% 0%, oklch(0.83 0.13 85 / 0.05), transparent 60%);
+}
+
+.ember-text {
+  background: linear-gradient(100deg, var(--accent), var(--gold));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.grid-dots {
+  background-image: radial-gradient(circle, var(--border) 1px, transparent 1px);
+  background-size: 22px 22px;
+}
+
+/* Мигающий курсор у потокового ответа */
+.streaming-caret::after {
+  content: '';
+  display: inline-block;
+  width: 0.5em;
+  height: 1em;
+  margin-left: 2px;
+  vertical-align: -0.15em;
+  border-radius: 2px;
+  background: var(--accent);
+  animation: caret 1s steps(2) infinite;
+}
+@keyframes caret {
+  50% {
+    opacity: 0;
+  }
+}
+
+@keyframes pulse-ring {
+  0% {
+    box-shadow: 0 0 0 0 var(--ring);
+  }
+  100% {
+    box-shadow: 0 0 0 8px transparent;
+  }
+}
+.pulse-ring {
+  animation: pulse-ring 1.4s ease-out infinite;
+}
+
+/* ─── Markdown ─────────────────────────────────────────────────────────── */
+
+.prose-forge {
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+}
+.prose-forge > * + * {
+  margin-top: 0.75em;
+}
+.prose-forge h1,
+.prose-forge h2,
+.prose-forge h3,
+.prose-forge h4 {
+  font-weight: 600;
+  line-height: 1.3;
+  margin-top: 1.2em;
+}
+.prose-forge h1 {
+  font-size: 1.3em;
+}
+.prose-forge h2 {
+  font-size: 1.15em;
+}
+.prose-forge h3 {
+  font-size: 1.04em;
+}
+.prose-forge > :first-child {
+  margin-top: 0;
+}
+.prose-forge ul,
+.prose-forge ol {
+  padding-left: 1.35em;
+}
+.prose-forge ul {
+  list-style: disc;
+}
+.prose-forge ol {
+  list-style: decimal;
+}
+.prose-forge li + li {
+  margin-top: 0.25em;
+}
+.prose-forge li::marker {
+  color: var(--faint);
+}
+.prose-forge a {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  text-decoration-color: var(--accent-soft);
+}
+.prose-forge a:hover {
+  text-decoration-color: var(--accent);
+}
+.prose-forge strong {
+  font-weight: 600;
+}
+.prose-forge blockquote {
+  border-left: 3px solid var(--border-strong);
+  padding-left: 0.9em;
+  color: var(--muted);
+}
+.prose-forge hr {
+  border-color: var(--border);
+}
+.prose-forge :not(pre) > code {
+  font-family: var(--font-mono);
+  font-size: 0.86em;
+  background: var(--surface-3);
+  padding: 0.12em 0.38em;
+  border-radius: 0.35em;
+}
+.prose-forge table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.92em;
+  display: block;
+  overflow-x: auto;
+}
+.prose-forge th,
+.prose-forge td {
+  border: 1px solid var(--border);
+  padding: 0.4em 0.7em;
+  text-align: left;
+}
+.prose-forge th {
+  background: var(--surface-2);
+  font-weight: 600;
+}
+
+/* Подсветка кода (highlight.js) в цветах темы */
+.hljs {
+  color: var(--fg);
+}
+.hljs-comment,
+.hljs-quote {
+  color: var(--faint);
+  font-style: italic;
+}
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-built_in,
+.hljs-name {
+  color: var(--p3);
+}
+.hljs-string,
+.hljs-attr,
+.hljs-template-tag,
+.hljs-addition {
+  color: var(--p6);
+}
+.hljs-number,
+.hljs-literal,
+.hljs-symbol {
+  color: var(--p7);
+}
+.hljs-title,
+.hljs-function,
+.hljs-section {
+  color: var(--p4);
+}
+.hljs-type,
+.hljs-class,
+.hljs-variable,
+.hljs-params {
+  color: var(--p1);
+}
+.hljs-deletion,
+.hljs-meta {
+  color: var(--p5);
+}
+
+/* ─── React Flow ───────────────────────────────────────────────────────── */
+
+.react-flow {
+  --xy-background-color: transparent;
+  --xy-edge-stroke: var(--border-strong);
+  --xy-edge-stroke-selected: var(--accent);
+  --xy-connectionline-stroke: var(--accent);
+  --xy-handle-background-color: var(--surface);
+  --xy-handle-border-color: var(--border-strong);
+  --xy-minimap-background-color: var(--surface);
+  --xy-minimap-mask-background-color: oklch(0.5 0 0 / 0.12);
+  --xy-controls-button-background-color: var(--surface);
+  --xy-controls-button-background-color-hover: var(--surface-2);
+  --xy-controls-button-color: var(--fg);
+  --xy-controls-button-border-color: var(--border);
+  --xy-attribution-background-color: transparent;
+  --xy-selection-background-color: var(--accent-soft);
+  --xy-selection-border: 1px dashed var(--accent);
+}
+.react-flow__attribution {
+  display: none;
+}
+.react-flow__edge-path {
+  stroke-width: 1.75;
+}
+.react-flow__edge.selected .react-flow__edge-path,
+.react-flow__edge:hover .react-flow__edge-path {
+  stroke: var(--accent);
+}
+.react-flow__handle {
+  width: 10px;
+  height: 10px;
+  border-width: 2px;
+}
+.react-flow__handle:hover {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.react-flow__controls {
+  box-shadow: var(--shadow);
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+}
+.react-flow__minimap {
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+@keyframes dash {
+  to {
+    stroke-dashoffset: -20;
+  }
+}
+.edge-live .react-flow__edge-path {
+  stroke: var(--accent);
+  stroke-dasharray: 6 4;
+  animation: dash 0.6s linear infinite;
+}

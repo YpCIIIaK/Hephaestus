@@ -88,7 +88,7 @@ export const ZERO_USAGE: Usage = { promptTokens: 0, completionTokens: 0, cost: 0
 
 const ALIAS_PATTERNS: Record<ModelAlias, RegExp[]> = {
   '@smart': [
-    /^anthropic\/claude-(sonnet|opus)-[\d.]+$/,
+    /^anthropic\/claude-sonnet-[\d.]+$/,
     /^anthropic\/claude-[\d.]+-sonnet$/,
     /^openai\/gpt-[\d.]+$/,
     /^google\/gemini-[\d.]+-pro$/,

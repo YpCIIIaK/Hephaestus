@@ -26,7 +26,8 @@ async function fetchOpenRouter(refresh: boolean): Promise<ModelInfo[]> {
   })
   if (!res.ok) throw new Error(`OpenRouter: ${res.status}`)
   const data = (await res.json()) as { data: OpenRouterModel[] }
-  const models: ModelInfo[] = data.data.map((m) => {
+  // Варианты :batch дублируют модели с отложенной обработкой — в интерактивной работе не нужны
+  const models: ModelInfo[] = data.data.filter((m) => !m.id.endsWith(':batch')).map((m) => {
     const prompt = Number(m.pricing?.prompt ?? NaN)
     const completion = Number(m.pricing?.completion ?? NaN)
     return {
