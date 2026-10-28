@@ -5,15 +5,21 @@ import { findModel } from './catalog'
 import { getCustomEndpoint, getOllamaUrl, getOpenRouterKey } from './settings'
 import { buildTools, runTool, type ToolDefinition } from './tools'
 import { mockStream } from './mock-llm'
+import { parseTextToolCalls, partialTagLength, TEXT_TOOL_CALL_TAG } from './text-tool-calls'
 
 // Единый шлюз к моделям. Все провайдеры говорят на OpenAI-совместимом API
 // (OpenRouter, Ollama /v1, LM Studio, vLLM…), поэтому клиент один.
 // Ответ — поток событий LLMEvent; цикл вызова инструментов идёт на сервере.
 
 const DEFAULT_MAX_STEPS = 8
-// Бесплатные модели OpenRouter часто отвечают 429 («rate-limited upstream»):
-// такой запрос безопасно повторить, ведь ответ ещё не начался.
+// Бесплатные модели OpenRouter часто отвечают 429 («rate-limited upstream»)
+// или «Service temporarily overloaded»: такой запрос безопасно повторить,
+// пока ответ ещё не начался.
+const TRANSIENT_STATUSES = new Set([429, 502, 503, 504])
+const TRANSIENT_MESSAGE = /overload|rate.?limit|temporar|unavailable|timed? ?out/i
 const RATE_LIMIT_RETRIES = 3
+// Повтор, если рассуждающая модель не уложилась в max_tokens и не дала ответа
+const REASONING_RETRY_MIN_TOKENS = 2048
 const RATE_LIMIT_BASE_DELAY_MS = 4000
 const RATE_LIMIT_MAX_DELAY_MS = 30_000
 
@@ -27,7 +33,7 @@ class GatewayError extends Error {
   constructor(
     message: string,
     readonly status?: number,
-    readonly retryAfter?: string | null,
+    readonly opts: { retryAfter?: string | null; retryable?: boolean; network?: boolean } = {},
   ) {
     super(message)
   }
@@ -105,6 +111,16 @@ function looksLikeJsonModeUnsupported(status: number, body: string) {
   return status === 400 && /response_format|json/i.test(body)
 }
 
+const OVERLOADED_HINT = ' — провайдер модели перегружен, попробуйте позже или выберите другую модель'
+const HTTP_HINTS: Record<number, string> = {
+  401: ' — проверьте ключ API',
+  402: ' — на счёте OpenRouter закончились средства',
+  429: ' — превышен лимит запросов, попробуйте позже',
+  502: OVERLOADED_HINT,
+  503: OVERLOADED_HINT,
+  504: OVERLOADED_HINT,
+}
+
 function describeHttpError(status: number, body: string): string {
   let msg = body
   try {
@@ -114,8 +130,7 @@ function describeHttpError(status: number, body: string): string {
   } catch {
     // тело не JSON
   }
-  const hint =
-    status === 401 ? ' — проверьте ключ API' : status === 402 ? ' — на счёте OpenRouter закончились средства' : status === 429 ? ' — превышен лимит запросов, попробуйте позже' : ''
+  const hint = HTTP_HINTS[status] ?? ''
   return `Ошибка ${status}: ${msg.slice(0, 400)}${hint}`
 }
 
@@ -123,6 +138,7 @@ async function* streamStep(
   ep: Endpoint,
   body: Record<string, unknown>,
   signal: AbortSignal | undefined,
+  toolNames: string[] = [],
 ): AsyncGenerator<LLMEvent, StepResult> {
   const res = await fetch(ep.url, {
     method: 'POST',
@@ -132,16 +148,33 @@ async function* streamStep(
   }).catch((e: unknown) => {
     if (signal?.aborted) throw e
     const where = ep.provider === 'ollama' ? 'Ollama не отвечает — запущен ли он?' : 'Нет соединения с провайдером'
-    throw new GatewayError(`${where} (${e instanceof Error ? e.message : String(e)})`, 502)
+    throw new GatewayError(`${where} (${e instanceof Error ? e.message : String(e)})`, 502, { network: true })
   })
   if (!res.ok || !res.body) {
     const text = await res.text().catch(() => '')
-    throw new GatewayError(text, res.status, res.headers.get('retry-after'))
+    throw new GatewayError(text, res.status, { retryAfter: res.headers.get('retry-after'), retryable: TRANSIENT_STATUSES.has(res.status) })
   }
 
   const calls: { id: string; name: string; args: string }[] = []
   let text = ''
   let reasoned = false
+  // Текст отдаём не сразу целиком: начиная с «<tool_call» модель могла
+  // записать вызов инструмента текстом — его не показываем, а выполняем
+  let shown = 0
+  let held = -1
+  const emitText = () => {
+    if (toolNames.length && held === -1) {
+      const i = text.indexOf(TEXT_TOOL_CALL_TAG, Math.max(0, shown - TEXT_TOOL_CALL_TAG.length))
+      if (i !== -1) held = i
+    }
+    const end = held !== -1 ? held : toolNames.length ? text.length - partialTagLength(text) : text.length
+    if (end > shown) {
+      queue.push({ t: 'text', v: text.slice(shown, end) })
+      shown = end
+    }
+  }
+  // Ошибка провайдера внутри потока до первого токена — её можно повторить
+  let streamError: GatewayError | null = null
   let usage: Usage | null = null
   let finish = 'stop'
   const queue: LLMEvent[] = []
@@ -167,14 +200,18 @@ async function* streamStep(
       return
     }
     if (chunk.error) {
-      queue.push({ t: 'error', message: chunk.error.message ?? 'Ошибка провайдера', status: chunk.error.code })
+      const message = chunk.error.message ?? 'Ошибка провайдера'
+      if (!text && !reasoned && !calls.length) {
+        const status = chunk.error.code ?? 502
+        streamError ??= new GatewayError(JSON.stringify({ error: { message } }), status, { retryable: TRANSIENT_STATUSES.has(status) || TRANSIENT_MESSAGE.test(message) })
+      } else queue.push({ t: 'error', message, status: chunk.error.code })
       return
     }
     const choice = chunk.choices?.[0]
     const delta = choice?.delta
     if (delta?.content) {
       text += delta.content
-      queue.push({ t: 'text', v: delta.content })
+      emitText()
     }
     const reasoning = delta?.reasoning ?? delta?.reasoning_content
     if (reasoning) {
@@ -206,9 +243,19 @@ async function* streamStep(
       if (done) break
       parser.push(decoder.decode(value, { stream: true }))
       while (queue.length) yield queue.shift()!
+      if (streamError) break
     }
     parser.flush()
     while (queue.length) yield queue.shift()!
+    if (streamError) throw streamError
+    const textCalls = held !== -1 && !calls.some((c) => c?.name) ? parseTextToolCalls(text.slice(held), toolNames) : []
+    if (textCalls.length) {
+      calls.push(...textCalls.map((c) => ({ id: c.id, name: c.function.name, args: c.function.arguments })))
+      text = text.slice(0, held)
+    } else if (shown < text.length) {
+      yield { t: 'text', v: text.slice(shown) }
+      shown = text.length
+    }
   } finally {
     reader.releaseLock()
   }
@@ -240,6 +287,8 @@ export async function* runLLM(req: LLMRequest, signal?: AbortSignal): AsyncGener
   let total: Usage = { ...ZERO_USAGE, cost: null }
   let finish = 'stop'
   let rateRetries = 0
+  let maxTokens = req.maxTokens ?? 4096
+  let lowReasoning = false
 
   for (let step = 0; step <= maxSteps; step++) {
     const body: Record<string, unknown> = {
@@ -247,7 +296,7 @@ export async function* runLLM(req: LLMRequest, signal?: AbortSignal): AsyncGener
       messages,
       stream: true,
       temperature: req.temperature ?? 0.7,
-      max_tokens: req.maxTokens ?? 4096,
+      max_tokens: maxTokens,
       stream_options: { include_usage: true },
     }
     if (ep.provider === 'openrouter') body.usage = { include: true }
@@ -256,20 +305,22 @@ export async function* runLLM(req: LLMRequest, signal?: AbortSignal): AsyncGener
       body.tool_choice = 'auto'
     }
     if (jsonMode) body.response_format = { type: 'json_object' }
+    if (lowReasoning && ep.provider === 'openrouter') body.reasoning = { effort: 'low' }
 
     let result: StepResult
     try {
-      result = yield* streamStep(ep, body, signal)
+      result = yield* streamStep(ep, body, signal, body.tools ? tools.map((t) => t.function.name) : [])
     } catch (e) {
       if (signal?.aborted) return
-      if (e instanceof GatewayError && e.status === 502) {
+      if (e instanceof GatewayError && e.opts.network) {
         yield { t: 'error', message: e.message, status: 502 }
         return
       }
-      if (e instanceof GatewayError && e.status === 429 && rateRetries < RATE_LIMIT_RETRIES) {
-        const delay = rateLimitDelayMs(rateRetries, e.retryAfter)
+      if (e instanceof GatewayError && e.opts.retryable && rateRetries < RATE_LIMIT_RETRIES) {
+        const delay = rateLimitDelayMs(rateRetries, e.opts.retryAfter)
         rateRetries++
-        yield { t: 'notice', v: `Лимит запросов провайдера — повтор через ${Math.round(delay / 1000)} с (${rateRetries}/${RATE_LIMIT_RETRIES})` }
+        const why = e.status === 429 ? 'Лимит запросов провайдера' : 'Провайдер временно перегружен'
+        yield { t: 'notice', v: `${why} — повтор через ${Math.round(delay / 1000)} с (${rateRetries}/${RATE_LIMIT_RETRIES})` }
         await sleep(delay, signal)
         if (signal?.aborted) return
         step--
@@ -305,6 +356,14 @@ export async function* runLLM(req: LLMRequest, signal?: AbortSignal): AsyncGener
     if (!result.toolCalls.length) {
       // Рассуждающие модели могут потратить весь max_tokens на рассуждения и не дать ответа
       if (result.finish === 'length' && result.reasoned && !result.text.trim()) {
+        // Один повтор с запасом токенов и просьбой рассуждать короче
+        if (!lowReasoning) {
+          lowReasoning = true
+          maxTokens = Math.max(maxTokens * 3, REASONING_RETRY_MIN_TOKENS)
+          yield { t: 'notice', v: `Модель потратила лимит на рассуждения — повтор с лимитом ${maxTokens} токенов` }
+          step--
+          continue
+        }
         yield {
           t: 'error',
           message: `Модель израсходовала весь лимит токенов (${body.max_tokens}) на рассуждения и не дала ответа — увеличьте лимит или выберите модель без рассуждений`,
