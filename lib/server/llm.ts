@@ -11,6 +11,11 @@ import { mockStream } from './mock-llm'
 // Ответ — поток событий LLMEvent; цикл вызова инструментов идёт на сервере.
 
 const DEFAULT_MAX_STEPS = 8
+// Бесплатные модели OpenRouter часто отвечают 429 («rate-limited upstream»):
+// такой запрос безопасно повторить, ведь ответ ещё не начался.
+const RATE_LIMIT_RETRIES = 3
+const RATE_LIMIT_BASE_DELAY_MS = 4000
+const RATE_LIMIT_MAX_DELAY_MS = 30_000
 
 interface Endpoint {
   url: string
@@ -22,9 +27,30 @@ class GatewayError extends Error {
   constructor(
     message: string,
     readonly status?: number,
+    readonly retryAfter?: string | null,
   ) {
     super(message)
   }
+}
+
+/** Пауза перед повтором после 429: Retry-After, если провайдер его прислал, иначе экспонента */
+export function rateLimitDelayMs(attempt: number, retryAfter?: string | null): number {
+  const secs = retryAfter ? Number(retryAfter) : NaN
+  const ms = Number.isFinite(secs) && secs >= 0 ? secs * 1000 : RATE_LIMIT_BASE_DELAY_MS * 2 ** attempt
+  return Math.min(ms, RATE_LIMIT_MAX_DELAY_MS)
+}
+
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    if (signal?.aborted) return resolve()
+    const timer = setTimeout(done, ms)
+    function done() {
+      clearTimeout(timer)
+      signal?.removeEventListener('abort', done)
+      resolve()
+    }
+    signal?.addEventListener('abort', done)
+  })
 }
 
 async function endpointFor(modelId: string): Promise<Endpoint> {
@@ -65,6 +91,7 @@ function withDate(messages: LLMMessage[]): LLMMessage[] {
 
 interface StepResult {
   text: string
+  reasoned: boolean
   toolCalls: ToolCall[]
   usage: Usage | null
   finish: string
@@ -109,11 +136,12 @@ async function* streamStep(
   })
   if (!res.ok || !res.body) {
     const text = await res.text().catch(() => '')
-    throw new GatewayError(text, res.status)
+    throw new GatewayError(text, res.status, res.headers.get('retry-after'))
   }
 
   const calls: { id: string; name: string; args: string }[] = []
   let text = ''
+  let reasoned = false
   let usage: Usage | null = null
   let finish = 'stop'
   const queue: LLMEvent[] = []
@@ -149,7 +177,10 @@ async function* streamStep(
       queue.push({ t: 'text', v: delta.content })
     }
     const reasoning = delta?.reasoning ?? delta?.reasoning_content
-    if (reasoning) queue.push({ t: 'reasoning', v: reasoning })
+    if (reasoning) {
+      reasoned = true
+      queue.push({ t: 'reasoning', v: reasoning })
+    }
     for (const tc of delta?.tool_calls ?? []) {
       const i = tc.index ?? calls.length
       calls[i] ??= { id: '', name: '', args: '' }
@@ -185,7 +216,7 @@ async function* streamStep(
   const toolCalls: ToolCall[] = calls
     .filter((c) => c && c.name)
     .map((c, i) => ({ id: c.id || `call_${i}_${Date.now()}`, type: 'function', function: { name: c.name, arguments: c.args } }))
-  return { text, toolCalls, usage, finish }
+  return { text, reasoned, toolCalls, usage, finish }
 }
 
 export async function* runLLM(req: LLMRequest, signal?: AbortSignal): AsyncGenerator<LLMEvent> {
@@ -208,6 +239,7 @@ export async function* runLLM(req: LLMRequest, signal?: AbortSignal): AsyncGener
   const messages = withDate(req.messages)
   let total: Usage = { ...ZERO_USAGE, cost: null }
   let finish = 'stop'
+  let rateRetries = 0
 
   for (let step = 0; step <= maxSteps; step++) {
     const body: Record<string, unknown> = {
@@ -233,6 +265,15 @@ export async function* runLLM(req: LLMRequest, signal?: AbortSignal): AsyncGener
       if (e instanceof GatewayError && e.status === 502) {
         yield { t: 'error', message: e.message, status: 502 }
         return
+      }
+      if (e instanceof GatewayError && e.status === 429 && rateRetries < RATE_LIMIT_RETRIES) {
+        const delay = rateLimitDelayMs(rateRetries, e.retryAfter)
+        rateRetries++
+        yield { t: 'notice', v: `Лимит запросов провайдера — повтор через ${Math.round(delay / 1000)} с (${rateRetries}/${RATE_LIMIT_RETRIES})` }
+        await sleep(delay, signal)
+        if (signal?.aborted) return
+        step--
+        continue
       }
       if (e instanceof GatewayError && e.status && e.status >= 400) {
         if (tools.length && looksLikeToolsUnsupported(e.status, e.message)) {
@@ -261,7 +302,18 @@ export async function* runLLM(req: LLMRequest, signal?: AbortSignal): AsyncGener
     total = addUsage(total, stepUsage)
     finish = result.finish
 
-    if (!result.toolCalls.length) break
+    if (!result.toolCalls.length) {
+      // Рассуждающие модели могут потратить весь max_tokens на рассуждения и не дать ответа
+      if (result.finish === 'length' && result.reasoned && !result.text.trim()) {
+        yield {
+          t: 'error',
+          message: `Модель израсходовала весь лимит токенов (${body.max_tokens}) на рассуждения и не дала ответа — увеличьте лимит или выберите модель без рассуждений`,
+        }
+        yield { t: 'usage', usage: total, model: req.model }
+        return
+      }
+      break
+    }
     if (step === maxSteps) {
       yield { t: 'notice', v: `Достигнут лимит шагов с инструментами (${maxSteps})` }
       break
