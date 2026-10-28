@@ -2,7 +2,7 @@
 
 import { AlertTriangle, ChartColumn, CheckCircle2, Download, Trash2 } from 'lucide-react'
 import Link from 'next/link'
-import { useMemo, useState } from 'react'
+import { Fragment, useMemo, useState } from 'react'
 import { Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { ModelName } from '@/components/model-picker'
 import { PageHeader } from '@/components/shell/page-header'
@@ -278,22 +278,31 @@ export function AnalyticsView() {
                         .slice(-60)
                         .reverse()
                         .map((e) => (
-                          <tr key={e.id} className="border-t border-border">
-                            <td className="whitespace-nowrap px-4 py-2 font-mono text-faint">{new Date(e.ts).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</td>
-                            <td className="max-w-48 truncate px-3 py-2">
-                              {SOURCE_LABEL[e.source]}
-                              {e.label && <span className="text-faint"> · {e.label}</span>}
-                            </td>
-                            <td className="max-w-56 px-3 py-2">
-                              <ModelName id={e.model} />
-                            </td>
-                            <td className="px-3 py-2 text-right font-mono tabular-nums">{formatTokens(e.promptTokens + e.completionTokens)}</td>
-                            <td className="px-3 py-2 text-right font-mono tabular-nums">{formatCost(e.cost)}</td>
-                            <td className="px-3 py-2 text-right font-mono tabular-nums">{formatMs(e.latencyMs)}</td>
-                            <td className="px-4 py-2" title={e.error}>
-                              {e.ok ? <CheckCircle2 className="size-3.5 text-success" aria-label="Успешно" /> : <AlertTriangle className="size-3.5 text-danger" aria-label={e.error} />}
-                            </td>
-                          </tr>
+                          <Fragment key={e.id}>
+                            <tr className="border-t border-border">
+                              <td className="whitespace-nowrap px-4 py-2 font-mono text-faint">{new Date(e.ts).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</td>
+                              <td className="max-w-48 truncate px-3 py-2">
+                                {SOURCE_LABEL[e.source]}
+                                {e.label && <span className="text-faint"> · {e.label}</span>}
+                              </td>
+                              <td className="max-w-56 px-3 py-2">
+                                <ModelName id={e.model} />
+                              </td>
+                              <td className="px-3 py-2 text-right font-mono tabular-nums">{formatTokens(e.promptTokens + e.completionTokens)}</td>
+                              <td className="px-3 py-2 text-right font-mono tabular-nums">{formatCost(e.cost)}</td>
+                              <td className="px-3 py-2 text-right font-mono tabular-nums">{formatMs(e.latencyMs)}</td>
+                              <td className="px-4 py-2" title={e.error}>
+                                {e.ok ? <CheckCircle2 className="size-3.5 text-success" aria-label="Успешно" /> : <AlertTriangle className="size-3.5 text-danger" aria-label={e.error} />}
+                              </td>
+                            </tr>
+                            {!e.ok && e.error && (
+                              <tr>
+                                <td colSpan={7} className="px-4 pb-2 text-xs text-danger">
+                                  {e.error}
+                                </td>
+                              </tr>
+                            )}
+                          </Fragment>
                         ))}
                     </tbody>
                   </table>
