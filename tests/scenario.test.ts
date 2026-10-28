@@ -40,8 +40,31 @@ describe('сценарный анализ', () => {
     expect(r.analyses[0].drivers).toEqual(['ставка'])
     const rep = r.report!
     expect(rep.scenarios.map((s) => s.probability)).toEqual([50, 50]) // нормировано к 100
-    expect(rep.scenarios[0].impacts).toEqual([{ domain: 'economy', severity: 5, text: 'x' }])
+    expect(rep.scenarios[0].impacts).toEqual([
+      { domain: 'economy', severity: 5, text: 'x' },
+      // синтез забыл про business — последствие взято из анализа области
+      { domain: 'business', severity: 2, text: 't' },
+    ])
+    expect(rep.scenarios[1].impacts).toEqual([])
     expect(rep.crossEffects[0].from).toBe('economy')
+  })
+
+  it('аналитику даёт явные ключи сценариев и не принимает пустой каркас', async () => {
+    const stages: Record<string, { status: string; error?: string }> = {}
+    const { llm, calls } = fakeLLM((req) => {
+      if (system(req).includes('"headline"')) return JSON.stringify({ headline: 'h', scenarios: [{ kind: 'baseline', probability: 100 }] })
+      // так ответила nvidia/nemotron-3.5-super-vl:free за «Политику»: повторила пример из промпта
+      if (system(req).includes('Бизнес')) return JSON.stringify({ drivers: ['ключевой фактор', 'ключевой фактор'], scenarios: {} })
+      return JSON.stringify({ drivers: ['ставка'], scenarios: { baseline: { narrative: 'n', impacts: [{ text: 't', severity: 2 }] } } })
+    })
+    const r = await runScenario({ ...cfg, research: false }, llm, { onStage: (id, st) => (stages[id] = st) })
+    const analystPrompt = system(calls[0])
+    expect(analystPrompt).toContain('"baseline": {"narrative"')
+    expect(analystPrompt).toContain('"pessimistic": {"narrative"')
+    expect(analystPrompt).not.toContain('<вид>')
+    expect(stages['domain:business']).toMatchObject({ status: 'error', error: 'Модель вернула некорректный JSON' })
+    expect(r.analyses.map((a) => a.domain)).toEqual(['economy'])
+    expect(r.report!.scenarios[0].impacts).toEqual([{ domain: 'economy', severity: 2, text: 't' }])
   })
 
   it('parseReport возвращает null для не-JSON', () => {

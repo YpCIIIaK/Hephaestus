@@ -94,7 +94,20 @@ function parseDomain(domain: DomainId, text: string, kinds: ScenarioKind[]): Dom
       impacts: asArray<Record<string, unknown>>(s.impacts).map((i) => ({ text: asString(i.text ?? i.impact), severity: severity(i.severity) })),
     }
   }
+  // Слабые модели возвращают пустой каркас или повторяют пример из промпта
+  if (!Object.keys(scenarios).length) return null
   return { domain, drivers: asArray(j.drivers).map((d) => asString(d)).filter(Boolean), scenarios }
+}
+
+/** Синтез может забыть последствия для части сценариев — берём их из отраслевых анализов */
+export function fillMissingImpacts(report: ScenarioReport, analyses: DomainAnalysis[]): ScenarioReport {
+  for (const s of report.scenarios) {
+    for (const a of analyses) {
+      if (s.impacts.some((i) => i.domain === a.domain)) continue
+      for (const i of a.scenarios[s.kind]?.impacts ?? []) s.impacts.push({ domain: a.domain, severity: i.severity, text: i.text })
+    }
+  }
+  return report
 }
 
 export function parseReport(text: string, cfg: Pick<ScenarioConfig, 'scenarios' | 'domains'>): ScenarioReport | null {
@@ -148,6 +161,8 @@ export async function runScenario(
 ): Promise<{ report: ScenarioReport | null; raw: string; usage: Usage; facts: string; analyses: DomainAnalysis[] }> {
   let usage: Usage = { ...ZERO_USAGE }
   const horizon = HORIZONS[cfg.horizon]
+  // Явные ключи вместо «<вид>»: иначе слабые модели повторяют каркас из промпта
+  const kindsShape = cfg.scenarios.map((k) => `"${k}": {"narrative": "…", "impacts": [{"text": "…", "severity": 1-5}]}`).join(', ')
   const kindsList = cfg.scenarios.map((k) => `${k} (${SCENARIO_KINDS[k].title}: ${SCENARIO_KINDS[k].hint})`).join('; ')
   const eventBlock = `Событие: ${cfg.event}${cfg.context.trim() ? `\nДополнительный контекст: ${cfg.context}` : ''}\nГоризонт прогноза: ${horizon}`
 
@@ -192,10 +207,10 @@ export async function runScenario(
             {
               role: 'system',
               content: `Ты — эксперт по направлению «${d.title}» (${d.focus}). Анализируй трезво, опирайся на прецеденты, отделяй вероятное от возможного. Пиши по-русски.
-Верни только JSON:
-{"drivers": ["ключевой фактор", ...],
- "scenarios": {"<вид>": {"narrative": "2–4 предложения, как развивается ситуация в твоей области", "impacts": [{"text": "конкретное последствие", "severity": 1-5}]}}}
-Виды сценариев: ${kindsList}.`,
+Верни только JSON такой формы:
+{"drivers": ["…"], "scenarios": {${kindsShape}}}
+drivers — 2–5 ключевых факторов. Для каждого сценария narrative — 2–4 предложения, как развивается ситуация в твоей области, impacts — 1–3 конкретных последствия с силой от 1 до 5. Вместо «…» — твой анализ, не повторяй форму.
+Виды сценариев (ключи scenarios): ${kindsList}.`,
             },
             { role: 'user', content: `${eventBlock}${facts ? `\n\nФакты:\n${facts}` : ''}` },
           ],
@@ -234,7 +249,7 @@ export async function runScenario(
 {
  "headline": "одна фраза — главный вывод",
  "summary": "3–5 предложений общей оценки",
- "scenarios": [{"kind": "<вид>", "title": "короткое название", "probability": <0-100>, "narrative": "как разворачивается", "triggers": ["что должно произойти, чтобы сценарий реализовался"], "timeline": [{"when": "срок", "what": "событие"}], "impacts": [{"domain": "<область>", "severity": 1-5, "text": "последствие"}]}],
+ "scenarios": [{"kind": "<вид>", "title": "короткое название", "probability": <0-100>, "narrative": "как разворачивается", "triggers": ["что должно произойти, чтобы сценарий реализовался"], "timeline": [{"when": "срок", "what": "событие"}], "impacts": [{"domain": "<область>", "severity": 1-5, "text": "последствие"}] — хотя бы по одному для каждой области}],
  "crossEffects": [{"from": "<область>", "to": "<область>", "effect": "как одно влияет на другое"}],
  "indicators": [{"signal": "что отслеживать", "meaning": "о каком сценарии говорит"}],
  "recommendations": ["практическая рекомендация"]
@@ -255,7 +270,8 @@ export async function runScenario(
     hooks.onStage('synthesis', { status: 'error', error: res.error })
     throw new Error(res.error)
   }
-  const report = parseReport(res.text, cfg)
+  const parsed = parseReport(res.text, cfg)
+  const report = parsed && fillMissingImpacts(parsed, ok)
   hooks.onStage('synthesis', report ? { status: 'done', usage: res.usage } : { status: 'error', error: 'Не удалось разобрать итоговый JSON', text: res.text })
   return { report, raw: res.text, usage, facts, analyses: ok }
 }
