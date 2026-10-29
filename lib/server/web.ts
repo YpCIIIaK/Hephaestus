@@ -6,7 +6,7 @@ export interface SearchResult {
   snippet: string
 }
 
-const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0 Safari/537.36'
+export const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0 Safari/537.36'
 
 export function decodeEntities(s: string): string {
   return s
@@ -20,7 +20,7 @@ export function decodeEntities(s: string): string {
     .replace(/&#x([0-9a-f]+);/gi, (_, n) => String.fromCodePoint(parseInt(n, 16)))
 }
 
-function stripTags(s: string): string {
+export function stripTags(s: string): string {
   return decodeEntities(s.replace(/<[^>]+>/g, '')).replace(/\s+/g, ' ').trim()
 }
 
@@ -53,51 +53,8 @@ export function parseDdgLite(html: string, max: number): SearchResult[] {
   return results
 }
 
-async function searchDdg(query: string, max: number, signal?: AbortSignal): Promise<SearchResult[]> {
-  const res = await fetch('https://lite.duckduckgo.com/lite/', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/x-www-form-urlencoded',
-      'User-Agent': UA,
-      Accept: 'text/html',
-      'Accept-Language': 'ru-RU,ru;q=0.9,en;q=0.8',
-    },
-    body: `q=${encodeURIComponent(query)}&kl=wt-wt`,
-    signal,
-  })
-  if (!res.ok) throw new Error(`DuckDuckGo ответил ${res.status}`)
-  const html = await res.text()
-  // Вместо выдачи DuckDuckGo может вернуть антибот-проверку (HTTP 202) —
-  // это не «ничего не найдено», иначе модель решит, что источников нет
-  if (isDdgBlocked(res.status, html)) {
-    throw new Error('DuckDuckGo временно заблокировал поиск (антибот-проверка). Повторите позже или укажите свой SearXNG в .env (SEARXNG_URL)')
-  }
-  return parseDdgLite(html, max)
-}
-
 export function isDdgBlocked(status: number, html: string): boolean {
   return /anomaly-modal/.test(html) || (status === 202 && !/result-link/.test(html))
-}
-
-async function searchSearx(base: string, query: string, max: number, signal?: AbortSignal): Promise<SearchResult[]> {
-  const url = `${base.replace(/\/+$/, '')}/search?q=${encodeURIComponent(query)}&format=json`
-  const res = await fetch(url, { headers: { Accept: 'application/json' }, signal })
-  if (!res.ok) throw new Error(`SearXNG ответил ${res.status}`)
-  const data = (await res.json()) as { results?: { title?: string; url?: string; content?: string }[] }
-  return (data.results ?? []).slice(0, max).map((r) => ({ title: r.title ?? '', url: r.url ?? '', snippet: r.content ?? '' }))
-}
-
-export async function webSearch(query: string, max = 6, signal?: AbortSignal): Promise<SearchResult[]> {
-  const searx = process.env.SEARXNG_URL
-  if (searx) {
-    try {
-      const r = await searchSearx(searx, query, max, signal)
-      if (r.length) return r
-    } catch {
-      // упадём на DuckDuckGo
-    }
-  }
-  return searchDdg(query, max, signal)
 }
 
 export function formatSearchResults(query: string, results: SearchResult[]): string {

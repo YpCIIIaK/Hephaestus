@@ -97,6 +97,8 @@ export interface ServerStatus {
   ollama: { url: string; reachable: boolean; models: number }
   custom: { url: string | null; configured: boolean }
   searxng: boolean
+  /** Свой метапоиск: поисковики и их состояние */
+  search: { id: string; name: string; pausedUntil?: number; lastError?: string; ok: number; failed: number }[]
   workspace: string
 }
 

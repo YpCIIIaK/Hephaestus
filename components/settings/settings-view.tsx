@@ -135,7 +135,17 @@ function Connections() {
       {status && (
         <div className="flex flex-wrap gap-x-5 gap-y-1 border-t border-border pt-4 text-xs text-muted">
           <span>
-            Веб-поиск: <b className="text-fg">{status.searxng ? 'SearXNG' : 'DuckDuckGo'}</b>
+            Веб-поиск (свой метапоиск, бесплатно):{' '}
+            {status.search.map((e, i) => {
+              const paused = (e.pausedUntil ?? 0) > Date.now()
+              return (
+                <span key={e.id} title={e.lastError}>
+                  {i > 0 && ', '}
+                  <b className={paused ? 'text-danger' : 'text-fg'}>{e.name}</b>
+                  {paused && ' (пауза)'}
+                </span>
+              )
+            })}
           </span>
           <span>
             Папка файлов: <code className="font-mono text-fg">{status.workspace}/</code>

@@ -1,7 +1,8 @@
 import type { ToolsetId } from '../types'
 import { formatKnowledgeHits, searchKnowledge } from './knowledge'
 import { getSkill, listSkills, skillsCatalogText } from './skills'
-import { fetchPage, formatSearchResults, webSearch } from './web'
+import { webSearch } from './search'
+import { fetchPage, formatSearchResults } from './web'
 import {
   deleteWorkspacePath,
   editWorkspaceFile,

@@ -131,7 +131,12 @@ describe('шлюз: перегрузка провайдера', () => {
       const pending = collect(runLLM({ model: 'nvidia/nemotron-3-ultra-550b-a55b:free', messages: [{ role: 'user', content: 'Проверь' }] }))
       let settled = false
       void pending.finally(() => (settled = true))
-      for (let i = 0; i < 20 && !settled; i++) await vi.advanceTimersByTimeAsync(1000)
+      // Двигаем фальшивое время, пока генератор не завершится; setImmediate (он не подменён)
+      // отдаёт управление настоящему циклу событий, чтобы поток успел дочитаться
+      while (!settled) {
+        await new Promise((r) => setImmediate(r))
+        await vi.advanceTimersByTimeAsync(500)
+      }
       const events = await pending
       expect(completions(fetchMock)).toBe(2)
       expect(events.find((e) => e.t === 'notice')).toMatchObject({ v: expect.stringMatching(/перегружен/) })

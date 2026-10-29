@@ -2,6 +2,7 @@ import path from 'node:path'
 import type { ServerStatus } from '../types'
 import { fetchOllamaModels } from './catalog'
 import { WORKSPACE_DIR } from './paths'
+import { searchStatus } from './search'
 import { getCustomEndpoint, getOllamaUrl, getOpenRouterKey, maskKey } from './settings'
 
 export async function getServerStatus(): Promise<ServerStatus> {
@@ -19,6 +20,7 @@ export async function getServerStatus(): Promise<ServerStatus> {
     ollama: { url: ollamaUrl, reachable, models },
     custom: { url: custom?.url ?? null, configured: !!custom },
     searxng: !!process.env.SEARXNG_URL,
+    search: searchStatus(),
     workspace: path.relative(process.cwd(), WORKSPACE_DIR) || '.',
   }
 }
