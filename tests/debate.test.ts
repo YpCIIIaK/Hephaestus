@@ -36,6 +36,7 @@ describe('дебаты', () => {
     expect(result).toBe('finished')
     expect(msgs.map((m) => m.speaker)).toEqual(['p1', 'p2', 'p1', 'p2'])
     expect(lastUser(calls[1])).toContain('реплика m1')
+    expect(msgs[1].received).toEqual([{ name: 'Анна', text: 'реплика m1' }])
     expect(lastUser(calls[2])).toContain('Анна (ты)')
     expect(system(calls[0])).toContain('Тебя зовут Анна')
     expect(verdict).toMatchObject({ winnerId: 'p2', scores: [{ participantId: 'p2' }, { participantId: 'p1' }] })

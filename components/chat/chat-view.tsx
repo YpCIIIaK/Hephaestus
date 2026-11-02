@@ -146,6 +146,7 @@ export function ChatView() {
             ))}
             <TargetPicker value={view.targets} onToggle={toggleTarget} />
           </div>
+          {view.targets.length > 1 && <button type="button" disabled={running} onClick={() => update({ interactions: !view.interactions })} className={cn('rounded-lg border px-2.5 py-1.5 text-xs disabled:opacity-50', view.interactions ? 'border-accent bg-accent-soft text-accent' : 'border-border text-muted hover:text-fg')} title="Модели отвечают по очереди и видят ответы друг друга. Запуск дольше и расходует больше токенов.">Общение {view.interactions ? 'вкл' : 'выкл'}</button>}
           {view.targets.length > 1 && (
             <Segmented
               className="hidden md:inline-flex"

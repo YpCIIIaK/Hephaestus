@@ -1,9 +1,9 @@
 'use client'
 
 import type { LLMCall, LLMCallOptions } from '../engine/llm'
-import { ALIAS_LABELS, isAlias, isFreeModel, providerOf } from '../models'
+import { ALIAS_LABELS, isAlias, isFreeModel, newestFreeModels, providerOf } from '../models'
 import { NDJSONParser } from '../sse'
-import { modelById, resolveModelId } from '../stores/catalog'
+import { modelById, resolveModelId, useCatalog } from '../stores/catalog'
 import { useSettings } from '../stores/settings'
 import { spentSince, startOfDay, startOfMonth, useUsage } from '../stores/usage'
 import type { LLMEvent, LLMRequest, LLMResult, ModelAlias, ToolTrace, Usage } from '../types'
@@ -26,7 +26,7 @@ export function budgetProblem(): string | null {
 
 const emptyUsage = (): Usage => ({ promptTokens: 0, completionTokens: 0, cost: 0 })
 
-export const callLLM: LLMCall = async (req: LLMRequest, opts: LLMCallOptions = {}): Promise<LLMResult> => {
+const callLLMOnce: LLMCall = async (req: LLMRequest, opts: LLMCallOptions = {}): Promise<LLMResult> => {
   const started = performance.now()
   const model = resolveModelId(req.model)
   const base = { text: '', reasoning: '', tools: [] as ToolTrace[], usage: emptyUsage(), model: model ?? req.model, latencyMs: 0 }
@@ -117,6 +117,20 @@ export const callLLM: LLMCall = async (req: LLMRequest, opts: LLMCallOptions = {
     })
   }
   return { text, reasoning, tools, usage: finalUsage, model, latencyMs, error: aborted ? undefined : error, aborted }
+}
+
+/** When free-only mode is enabled, recover from transient provider failures on another free model. */
+export const callLLM: LLMCall = async (req, opts = {}) => {
+  const first = await callLLMOnce(req, opts)
+  if (!useSettings.getState().freeOnly || !first.error || first.text || opts.signal?.aborted || !/429|лимит запросов|перегруз|overload|rate limit|временно недоступ|503/i.test(first.error)) return first
+  const candidates = newestFreeModels(useCatalog.getState().models).filter((m) => m.id !== first.model && (!req.tools?.length || m.supportsTools)).slice(0, 2)
+  let result = first
+  for (const candidate of candidates) {
+    opts.onEvent?.({ t: 'notice', v: `Модель ${result.model} недоступна. Пробуем бесплатную ${candidate.id}` })
+    result = await callLLMOnce({ ...req, model: candidate.id }, opts)
+    if (!result.error || result.text || opts.signal?.aborted) break
+  }
+  return result
 }
 
 export async function callTool(name: string, args: Record<string, unknown>, signal?: AbortSignal): Promise<{ ok: boolean; output: string }> {

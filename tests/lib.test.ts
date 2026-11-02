@@ -100,17 +100,17 @@ describe('модели', () => {
       { id: 'poolside/laguna-xs-2.1:free', name: '', provider: 'openrouter', vendor: 'poolside', pricing: paid, supportsTools: true, created: 6 },
     ]
     expect(pickAliasModel('@smart', cat, true)).toBe('nvidia/nemotron-3-ultra-550b-a55b:free')
-    expect(pickAliasModel('@default', cat, true)).toBe('nvidia/nemotron-3.5-super-vl:free')
+    expect(pickAliasModel('@default', cat, true)).toBe('google/gemma-4-31b-it:free')
     expect(pickAliasModel('@default', cat.filter((m) => !m.id.includes('super')), true)).toBe('google/gemma-4-31b-it:free')
-    expect(pickAliasModel('@fast', cat, true)).toBe('google/gemma-4-26b-a4b-it:free')
+    expect(pickAliasModel('@fast', cat, true)).toBe('nvidia/nemotron-3.5-super-vl:free')
     expect(pickAliasModel('@smart', cat)).toBe('anthropic/claude-sonnet-4.5')
-    // ни одного шаблона не нашлось — свежая бесплатная модель с инструментами, но не платная
+    // выбор идёт по дате публикации, даже когда новая модель не поддерживает инструменты
     const other: ModelInfo[] = [
       { id: 'openai/gpt-5', name: '', provider: 'openrouter', vendor: 'openai', pricing: paid, supportsTools: true, created: 9 },
       { id: 'liquid/lfm-2.5-2.6b:free', name: '', provider: 'openrouter', vendor: 'liquid', pricing: free, supportsTools: false, created: 8 },
       { id: 'recursive/flint-v1.0:free', name: '', provider: 'openrouter', vendor: 'recursive', pricing: free, supportsTools: true, created: 7 },
     ]
-    expect(pickAliasModel('@smart', other, true)).toBe('recursive/flint-v1.0:free')
+    expect(pickAliasModel('@smart', other, true)).toBe('liquid/lfm-2.5-2.6b:free')
     expect(pickAliasModel('@smart', [other[0]], true)).toBeNull()
   })
   it('стоимость по прайсу', () => {

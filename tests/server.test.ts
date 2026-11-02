@@ -19,7 +19,7 @@ describe('workspace', () => {
   it('не выпускает за пределы песочницы', async () => {
     await expect(ws.resolveWorkspacePath('../heph-secret.txt')).rejects.toThrow(/за пределы/)
     await expect(ws.resolveWorkspacePath('/etc/passwd')).resolves.toMatchObject({ rel: 'etc/passwd' })
-    await fs.symlink(os.tmpdir(), path.join(dir, 'escape'))
+    await fs.symlink(os.tmpdir(), path.join(dir, 'escape'), process.platform === 'win32' ? 'junction' : 'dir')
     await expect(ws.readWorkspaceFile('escape/heph-secret.txt')).rejects.toThrow(/за пределы/)
   })
 

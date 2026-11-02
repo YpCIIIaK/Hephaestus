@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { parseReport, runScenario, type ScenarioConfig } from '@/lib/engine/scenario'
-import { fakeLLM, system } from './helpers'
+import { fakeLLM, lastUser, system } from './helpers'
 
 const cfg: ScenarioConfig = {
   event: 'ЦБ поднял ставку',
@@ -14,6 +14,16 @@ const cfg: ScenarioConfig = {
 }
 
 describe('сценарный анализ', () => {
+  it('в режиме взаимодействий второй аналитик получает ответ первого', async () => {
+    const { llm, calls } = fakeLLM((req) => {
+      if (system(req).includes('"headline"')) return JSON.stringify({ headline: 'Вывод', scenarios: [{ kind: 'baseline', probability: 100 }] })
+      return JSON.stringify({ drivers: ['ставка'], scenarios: { baseline: { narrative: 'влияние ставки', impacts: [] } } })
+    })
+    await runScenario({ ...cfg, research: false, interactions: true, scenarios: ['baseline'] }, llm, { onStage: () => {} })
+    expect(lastUser(calls[1])).toContain('Ответы других аналитиков')
+    expect(lastUser(calls[1])).toContain('Экономика:')
+    expect(lastUser(calls[1])).toContain('влияние ставки')
+  })
   it('проходит все этапы и собирает отчёт', async () => {
     const stages: string[] = []
     const { llm, calls } = fakeLLM((req) => {

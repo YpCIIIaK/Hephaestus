@@ -89,11 +89,10 @@ const ReplyCard = memo(function ReplyCard({
         {showReasoning && reply.reasoning && <Reasoning text={reply.reasoning} streaming={streaming && !reply.text} />}
         {!!reply.received?.length && <details className="rounded-lg border border-border p-2 text-xs"><summary className="cursor-pointer font-medium">Видел ответы других участников · {reply.received.length}</summary><div className="mt-2 space-y-2">{reply.received.map((item, i) => <div key={i}><b>{item.name}</b><div className="max-h-48 overflow-y-auto whitespace-pre-wrap break-words text-muted">{item.text}</div></div>)}</div></details>}
         {!!reply.tools?.length && <ToolTraceList tools={reply.tools} />}
-        {reply.notices?.map((n) => (
-          <div key={n} className="flex items-center gap-2 text-xs text-warning">
-            <AlertTriangle className="size-3.5" /> {n}
-          </div>
-        ))}
+        {!!reply.notices?.length && <details className="rounded-lg border border-warning/25 bg-warning/5 px-3 py-2 text-xs text-warning">
+          <summary className="cursor-pointer">События провайдера · {reply.notices.length}</summary>
+          <div className="mt-2 space-y-1">{reply.notices.map((n, i) => <div key={i}>{n}</div>)}</div>
+        </details>}
         {reply.text ? (
           <Markdown text={reply.text} streaming={streaming} />
         ) : streaming ? (
@@ -128,6 +127,7 @@ const ReplyCard = memo(function ReplyCard({
           <button onClick={() => patchReply(convId, turnId, key, { rating: reply.rating === -1 ? undefined : -1 })} className={cn('rounded-md p-1.5 hover:bg-surface-2', reply.rating === -1 ? 'text-danger' : 'text-muted hover:text-fg')} aria-label="Плохой ответ">
             <ThumbsDown className="size-3.5" />
           </button>
+          {reply.model && <span className="max-w-48 truncate text-[10px] text-faint" title={reply.model}>Ответила: {reply.model}</span>}
           <UsageLine usage={reply.usage} latencyMs={reply.latencyMs} className="ml-auto pr-1.5" />
         </div>
       )}
