@@ -58,6 +58,7 @@ export async function startPipeline(pipeline: Pipeline, input: string, step = fa
     startedAt: Date.now(),
     nodes: Object.fromEntries(pipeline.nodes.map((n) => [n.id, { status: 'idle' as const }])),
     usage: { promptTokens: 0, completionTokens: 0, cost: 0 },
+    interactions: [],
   })
   const runner = usePipelineRunner.getState()
   runner.set(pipeline.id, { runId, step })
@@ -91,7 +92,10 @@ export async function startPipeline(pipeline: Pipeline, input: string, step = fa
       pipeline,
       input,
       { llm: callLLM, tool: callTool, getAgent },
-      { onNode, beforeNode },
+      { onNode, beforeNode, onInteraction: (entry) => {
+        const current = usePipelines.getState().runs.find((r) => r.id === runId)
+        usePipelines.getState().patchRun(runId, { interactions: [...(current?.interactions ?? []), entry] })
+      } },
       { signal: ac.signal, runId, concurrency: step ? 1 : 4 },
     )
     usePipelines.getState().patchRun(runId, { status: run.status, endedAt: run.endedAt, output: run.output, error: run.error, usage: run.usage })

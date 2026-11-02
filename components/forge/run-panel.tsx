@@ -57,7 +57,7 @@ function Timeline({ pipeline, run }: { pipeline: Pipeline; run: PipelineRun }) {
   )
 }
 
-export function RunPanel({ pipeline, run, onRun, onSelectRun, onSelectNode }: { pipeline: Pipeline; run?: PipelineRun; onRun: (input: string, step: boolean) => void; onSelectRun: (id: string) => void; onSelectNode: (id: string) => void }) {
+export function RunPanel({ pipeline, run, onRun, onSelectRun, onSelectNode, onChange }: { pipeline: Pipeline; run?: PipelineRun; onRun: (input: string, step: boolean) => void; onSelectRun: (id: string) => void; onSelectNode: (id: string) => void; onChange: (pipeline: Pipeline) => void }) {
   const [input, setInput] = useState(() => inputs.get(pipeline.id) ?? run?.input ?? '')
   const [step, setStep] = useState(false)
   const active = usePipelineRunner((s) => s.active[pipeline.id])
@@ -120,6 +120,10 @@ export function RunPanel({ pipeline, run, onRun, onSelectRun, onSelectNode }: { 
             {active ? <Spinner /> : <Play className="fill-current" />} {active ? 'Выполняется' : 'Запустить'}
           </Button>
         </div>
+        <label className="flex items-start gap-2 rounded-lg bg-surface-2/50 p-2.5 text-xs">
+          <Switch checked={!!pipeline.interactions} disabled={!!active} onCheckedChange={(value) => onChange({ ...pipeline, interactions: value, updatedAt: new Date().toISOString() })} />
+          <span>Взаимодействия агентов {pipeline.interactions ? 'включены' : 'выключены'}<span className="block text-muted">Агенты по очереди видят ответы друг друга и могут на них ссылаться. Запуск дольше и расходует больше токенов.</span></span>
+        </label>
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto">
@@ -140,6 +144,7 @@ export function RunPanel({ pipeline, run, onRun, onSelectRun, onSelectNode }: { 
               )}
             </div>
             {finished && <UsageLine usage={run.usage} />}
+            {!!run.interactions?.length && <div className="space-y-2"><div className="text-[11px] font-semibold uppercase tracking-wider text-faint">Разговор агентов</div>{run.interactions.map((entry, i) => <details key={i} className="rounded-xl border border-border bg-surface p-3" open={i === run.interactions!.length - 1}><summary className="cursor-pointer text-xs font-semibold">{entry.label} · {new Date(entry.at).toLocaleTimeString()}</summary><div className="mt-2"><Markdown text={entry.text} className="text-[13px]" /></div></details>)}</div>}
             {run.error && <div className="rounded-lg border border-warning/30 bg-warning/8 p-2.5 text-[13px]">{run.error}</div>}
             {run.output && (
               <div className="rounded-xl border border-border bg-surface">

@@ -99,7 +99,7 @@ async function runTarget(conv: Conversation, turnIndex: number, target: ChatTarg
   const turn = conv.turns[turnIndex]
   const key = targetKey(target)
   const started = Date.now()
-  patchReply(conv.id, turn.id, key, { status: 'streaming', text: '', reasoning: '', tools: [], notices: [], error: undefined, usage: undefined, startedAt: started, progress: undefined })
+  patchReply(conv.id, turn.id, key, { status: 'streaming', text: '', reasoning: '', tools: [], notices: [], error: undefined, usage: undefined, startedAt: started, progress: undefined, received: [] })
   const settings = useSettings.getState()
 
   if (target.kind === 'pipeline') {
@@ -159,6 +159,11 @@ async function runTarget(conv: Conversation, turnIndex: number, target: ChatTarg
   }
 
   const { messages } = buildChatMessages(useChats.getState().conversations.find((c) => c.id === conv.id) ?? conv, key, turnIndex, system, settings.chat.maxContextTokens)
+  const received = conv.interactions ? conv.targets.filter((t) => targetKey(t) !== key).map((t) => ({ name: describeTarget(t).name, text: getConv(conv.id)?.turns[turnIndex]?.replies[targetKey(t)]?.text ?? '' })).filter((item) => item.text) : []
+  if (received.length) {
+    messages.unshift({ role: 'system', content: `Ответы других участников этого обсуждения. Учитывай их и явно называй участника, если дополняешь или оспариваешь его вывод:\n\n${received.map((item) => `${item.name}: ${item.text}`).join('\n\n')}` })
+    patchReply(conv.id, turn.id, key, { received })
+  }
   let text = ''
   let reasoning = ''
   const traces: ToolTrace[] = []
@@ -233,7 +238,12 @@ export async function sendMessage(convId: string, text: string, attachments: { n
   const turnIndex = fresh.turns.length - 1
   const ac = track(convId)
   try {
-    await Promise.all(fresh.targets.map((t) => runTarget(fresh, turnIndex, t, ac.signal)))
+    if (fresh.interactions) {
+      for (const target of fresh.targets) {
+        if (ac.signal.aborted) break
+        await runTarget(fresh, turnIndex, target, ac.signal)
+      }
+    } else await Promise.all(fresh.targets.map((t) => runTarget(fresh, turnIndex, t, ac.signal)))
   } finally {
     untrack(convId, ac)
   }

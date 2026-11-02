@@ -226,6 +226,16 @@ export function NodeOutput({ run }: { run: NodeRun }) {
         {run.note && <span className="text-xs text-muted">{run.note}</span>}
       </div>
       <UsageLine usage={run.usage} latencyMs={run.startedAt && run.endedAt ? run.endedAt - run.startedAt : undefined} />
+      {!!run.received?.length && <details className="rounded-xl border border-border p-3" open>
+        <summary className="cursor-pointer text-xs font-semibold">Получено от других узлов · {run.received.length}</summary>
+        <div className="mt-3 space-y-3">{run.received.map((part, i) => <div key={i} className="rounded-lg bg-surface-2/50 p-2.5">
+          <div className="mb-1 text-xs font-medium text-muted">{part.label} → этот узел</div>
+          <div className="max-h-56 overflow-y-auto whitespace-pre-wrap break-words text-xs">{part.output}</div>
+        </div>)}</div>
+      </details>}
+      {run.systemPrompt && <details className="rounded-xl border border-border p-3"><summary className="cursor-pointer text-xs font-semibold">Инструкция модели</summary><div className="mt-2 max-h-64 overflow-y-auto whitespace-pre-wrap break-words text-xs">{run.systemPrompt}</div></details>}
+      {run.prompt && <details className="rounded-xl border border-border p-3"><summary className="cursor-pointer text-xs font-semibold">Запрос модели</summary><div className="mt-2 max-h-64 overflow-y-auto whitespace-pre-wrap break-words text-xs">{run.prompt}</div></details>}
+      {run.reasoning && <details className="rounded-xl border border-border p-3"><summary className="cursor-pointer text-xs font-semibold">Рассуждения, переданные моделью</summary><div className="mt-2 max-h-64 overflow-y-auto whitespace-pre-wrap break-words text-xs">{run.reasoning}</div></details>}
       {!!run.tools?.length && <ToolTraceList tools={run.tools} />}
       {run.error && <div className="rounded-lg border border-danger/25 bg-danger/8 p-2.5 text-[13px] text-danger">{run.error}</div>}
       {run.output && (

@@ -86,6 +86,7 @@ function Setup({ initial, onStart }: { initial?: ScenarioConfig; onStart: (c: Sc
           </span>
           <Switch checked={c.research} onCheckedChange={(v) => set({ research: v })} />
         </label>
+        <label className="flex items-center justify-between gap-3 text-[13px]"><span>Взаимодействия аналитиков<span className="block text-xs text-muted">Работают по очереди и видят ответы коллег. Дольше и больше расход токенов.</span></span><Switch checked={!!c.interactions} onCheckedChange={(v) => set({ interactions: v })} /></label>
         <FieldRow label="Модель аналитиков">
           <ModelPicker value={c.analystModel} onChange={(analystModel) => set({ analystModel })} />
         </FieldRow>
@@ -337,10 +338,10 @@ function RunView({ run, onRepeat }: { run: ScenarioRun; onRepeat: () => void }) 
             )}
           </div>
         </div>
-        {(run.status === 'running' || !run.report) && (
+        {(
           <div className="space-y-2.5 rounded-2xl border border-border bg-surface p-4">
             {stages.map(([id, label]) => (
-              <StageRow key={id} label={label} s={run.stages[id]} />
+              <div key={id}><StageRow label={label} s={run.stages[id]} />{run.stages[id]?.text && <details className="mt-1 ml-6 rounded-lg bg-surface-2/50 p-2 text-xs"><summary className="cursor-pointer">Посмотреть ответ</summary><div className="mt-2 max-h-72 overflow-y-auto whitespace-pre-wrap break-words">{run.stages[id].text}</div></details>}</div>
             ))}
           </div>
         )}

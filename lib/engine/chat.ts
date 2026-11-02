@@ -22,6 +22,7 @@ export interface Attachment {
 export interface ChatReply {
   status: 'streaming' | 'done' | 'error' | 'stopped'
   text: string
+  received?: { name: string; text: string }[]
   reasoning?: string
   tools?: ToolTrace[]
   notices?: string[]
@@ -62,6 +63,7 @@ export interface Conversation {
   targets: ChatTarget[]
   systemPrompt: string
   tools: ToolsetId[]
+  interactions?: boolean
   turns: ChatTurn[]
   pinned?: boolean
 }

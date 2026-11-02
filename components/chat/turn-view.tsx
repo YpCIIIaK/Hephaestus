@@ -87,6 +87,7 @@ const ReplyCard = memo(function ReplyCard({
           </div>
         )}
         {showReasoning && reply.reasoning && <Reasoning text={reply.reasoning} streaming={streaming && !reply.text} />}
+        {!!reply.received?.length && <details className="rounded-lg border border-border p-2 text-xs"><summary className="cursor-pointer font-medium">Видел ответы других участников · {reply.received.length}</summary><div className="mt-2 space-y-2">{reply.received.map((item, i) => <div key={i}><b>{item.name}</b><div className="max-h-48 overflow-y-auto whitespace-pre-wrap break-words text-muted">{item.text}</div></div>)}</div></details>}
         {!!reply.tools?.length && <ToolTraceList tools={reply.tools} />}
         {reply.notices?.map((n) => (
           <div key={n} className="flex items-center gap-2 text-xs text-warning">

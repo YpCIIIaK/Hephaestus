@@ -21,6 +21,17 @@ function graph(nodes: Array<Omit<PipelineNode, 'position'>>, edges: Array<[strin
 }
 
 describe('runPipeline', () => {
+  it('в режиме взаимодействий передаёт предыдущую реплику следующему агенту', async () => {
+    const { llm, calls } = fakeLLM((req) => `ответ ${lastUser(req)}`)
+    const p = graph([
+      { id: 'a', kind: 'agent', label: 'Аналитик', config: { model: 'm1', prompt: 'идея' } },
+      { id: 'b', kind: 'agent', label: 'Критик', config: { model: 'm2', prompt: 'проверь' } },
+    ], [])
+    p.interactions = true
+    const run = await runPipeline(p, 'задание', { llm, tool: noTool, getAgent })
+    expect(run.interactions?.map((entry) => entry.label)).toEqual(['Аналитик', 'Критик'])
+    expect(system(calls[1])).toContain('Аналитик: ответ идея')
+  })
   it('прокидывает выходы по графу и подставляет шаблоны', async () => {
     const { llm, calls } = fakeLLM((req) => `ответ на [${lastUser(req)}]`)
     const p = graph(

@@ -349,6 +349,7 @@ function Session({ s, onRepeat }: { s: DebateSession; onRepeat: () => void }) {
                         {m.content ? <Markdown text={m.content} streaming={m.status === 'streaming'} className="text-[14px]" /> : m.status === 'streaming' ? <Spinner className="text-accent" /> : null}
                         {m.status === 'error' && <div className="mt-1 text-[13px] text-danger">{m.error}</div>}
                       </div>
+                      {!!m.received?.length && <details className="mt-1 rounded-lg border border-border p-2 text-xs"><summary className="cursor-pointer text-muted">Учитывал реплики · {m.received.length}</summary><div className="mt-2 space-y-2">{m.received.map((item, i) => <div key={i}><b>{item.name}</b><div className="max-h-40 overflow-y-auto whitespace-pre-wrap break-words text-muted">{item.text}</div></div>)}</div></details>}
                       {m.status === 'done' && <UsageLine usage={m.usage} latencyMs={m.endedAt ? m.endedAt - m.startedAt : undefined} className="mt-1 pl-1" />}
                     </div>
                   </div>

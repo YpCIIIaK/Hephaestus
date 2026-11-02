@@ -34,6 +34,7 @@ export interface DebateMessage {
   round: number
   speaker: string // id участника, 'user' или 'judge'
   content: string
+  received?: { name: string; text: string }[]
   status: 'streaming' | 'done' | 'error'
   error?: string
   usage?: Usage
@@ -212,7 +213,9 @@ export async function runDebate(
     hooks.onRound(round)
     for (const p of speakerOrder(config, round)) {
       throwIfAborted(signal)
-      const msg: DebateMessage = { id: msgId(), round, speaker: p.id, content: '', status: 'streaming', model: p.model, startedAt: Date.now() }
+      const visible = config.memory === 'recent' ? log.filter((m) => m.round >= round - 1 || m.speaker === p.id || m.speaker === 'user') : log
+      const received = visible.filter((m) => m.status === 'done' && m.speaker !== 'judge').map((m) => ({ name: nameOf(config, m.speaker), text: m.content }))
+      const msg: DebateMessage = { id: msgId(), round, speaker: p.id, content: '', received, status: 'streaming', model: p.model, startedAt: Date.now() }
       hooks.onMessage(msg)
       log.push(msg)
       let content = ''

@@ -39,6 +39,7 @@ export interface ScenarioConfig {
   analystModel: string
   synthModel: string
   research: boolean
+  interactions?: boolean
 }
 
 export interface DomainAnalysis {
@@ -190,10 +191,10 @@ export async function runScenario(
     hooks.onStage('research', res.error ? { status: 'error', error: res.error } : { status: 'done', text: facts, usage: res.usage })
   }
 
-  // 2. Отраслевые аналитики — параллельно
+  // 2. Отраслевые аналитики: при взаимодействии каждый видит готовые ответы коллег.
   throwIfAborted(signal)
-  const analyses = await Promise.all(
-    cfg.domains.map(async (domain) => {
+  const exchange: { label: string; text: string }[] = []
+  const analyze = async (domain: DomainId) => {
       const id: StageId = `domain:${domain}`
       hooks.onStage(id, { status: 'running' })
       const d = DOMAINS[domain]
@@ -212,7 +213,7 @@ export async function runScenario(
 drivers — 2–5 ключевых факторов. Для каждого сценария narrative — 2–4 предложения, как развивается ситуация в твоей области, impacts — 1–3 конкретных последствия с силой от 1 до 5. Вместо «…» — твой анализ, не повторяй форму.
 Виды сценариев (ключи scenarios): ${kindsList}.`,
             },
-            { role: 'user', content: `${eventBlock}${facts ? `\n\nФакты:\n${facts}` : ''}` },
+            { role: 'user', content: `${eventBlock}${facts ? `\n\nФакты:\n${facts}` : ''}${cfg.interactions && exchange.length ? `\n\nОтветы других аналитиков. Учитывай их и называй коллег по направлению, если дополняешь или оспариваешь вывод:\n${exchange.map((item) => `${item.label}: ${item.text}`).join('\n\n')}` : ''}` },
           ],
         },
         { signal, meta: { source: 'scenario', label: d.title } },
@@ -224,10 +225,14 @@ drivers — 2–5 ключевых факторов. Для каждого сц�
         return null
       }
       const parsed = parseDomain(domain, res.text, cfg.scenarios)
+      if (cfg.interactions) exchange.push({ label: d.title, text: res.text })
       hooks.onStage(id, parsed ? { status: 'done', text: res.text, usage: res.usage } : { status: 'error', error: 'Модель вернула некорректный JSON', text: res.text })
       return parsed
-    }),
-  )
+  }
+  const analyses: (DomainAnalysis | null)[] = []
+  if (cfg.interactions) {
+    for (const domain of cfg.domains) analyses.push(await analyze(domain))
+  } else analyses.push(...await Promise.all(cfg.domains.map(analyze)))
   const ok = analyses.filter((a): a is DomainAnalysis => !!a)
   if (!ok.length) throw new Error('Ни один аналитик не дал результата')
 

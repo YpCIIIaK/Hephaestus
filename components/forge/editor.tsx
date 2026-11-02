@@ -223,7 +223,7 @@ function Canvas({ pipeline, onChange }: { pipeline: Pipeline; onChange: (p: Pipe
         }}
       />
     ) : (
-      <RunPanel pipeline={pipeline} run={currentRun?.pipelineId === pipeline.id ? currentRun : undefined} onRun={run} onSelectRun={setViewRunId} onSelectNode={(id) => { setSelectedId(id); setPanel('node') }} />
+      <RunPanel pipeline={pipeline} run={currentRun?.pipelineId === pipeline.id ? currentRun : undefined} onRun={run} onSelectRun={setViewRunId} onSelectNode={(id) => { setSelectedId(id); setPanel('node') }} onChange={onChange} />
     )
 
   return (

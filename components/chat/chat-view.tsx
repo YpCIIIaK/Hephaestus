@@ -171,6 +171,7 @@ export function ChatView() {
                 </button>
               </MenuTrigger>
               <MenuContent>
+                <MenuItem onSelect={() => update({ interactions: !view.interactions })}>Взаимодействия: {view.interactions ? 'вкл' : 'выкл'} · модели видят ответы друг друга; больше токенов</MenuItem>
                 <MenuItem onSelect={() => setChatDefaults({ autoJudge: !defaults.autoJudge })}>
                   <Gavel /> Автосудья: {defaults.autoJudge ? 'вкл' : 'выкл'}
                 </MenuItem>

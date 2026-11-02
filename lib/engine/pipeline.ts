@@ -64,6 +64,7 @@ export interface Pipeline {
   name: string
   description: string
   emoji: string
+  interactions?: boolean
   nodes: PipelineNode[]
   edges: PipelineEdge[]
   createdAt: string
@@ -76,6 +77,10 @@ export type NodeStatus = 'idle' | 'running' | 'done' | 'skipped' | 'error'
 
 export interface NodeRun {
   status: NodeStatus
+  /** Exact context and prompt supplied to this node during the latest attempt. */
+  received?: { label: string; output: string }[]
+  prompt?: string
+  systemPrompt?: string
   output?: string
   error?: string
   note?: string
@@ -101,6 +106,7 @@ export interface PipelineRun {
   output?: string
   error?: string
   usage: Usage
+  interactions?: { nodeId: string; label: string; text: string; at: number }[]
 }
 
 export interface PipelineDeps {
@@ -111,6 +117,7 @@ export interface PipelineDeps {
 
 export interface PipelineHooks {
   onNode?: (nodeId: string, patch: Partial<NodeRun>) => void
+  onInteraction?: (entry: NonNullable<PipelineRun['interactions']>[number]) => void
   /** Вызывается перед запуском каждого узла; пошаговый режим ждёт здесь нажатия «Дальше» */
   beforeNode?: (node: PipelineNode) => Promise<void>
 }
@@ -230,7 +237,7 @@ export function effectiveAgentConfig(node: PipelineNode, getAgent: PipelineDeps[
 }
 
 export async function runPipeline(
-  pipeline: Pick<Pipeline, 'id' | 'name' | 'nodes' | 'edges'>,
+  pipeline: Pick<Pipeline, 'id' | 'name' | 'nodes' | 'edges' | 'interactions'>,
   input: string,
   deps: PipelineDeps,
   hooks: PipelineHooks = {},
@@ -247,6 +254,7 @@ export async function runPipeline(
     startedAt: Date.now(),
     nodes: Object.fromEntries(nodes.map((n) => [n.id, { status: 'idle' } as NodeRun])),
     usage: { ...ZERO_USAGE },
+    interactions: [],
   }
 
   const update = (id: string, patch: Partial<NodeRun>) => {
@@ -303,11 +311,15 @@ export async function runPipeline(
   const callAgent = async (node: PipelineNode, ctx: ExecContext, extraFeedback?: string): Promise<LLMResult> => {
     const cfg = effectiveAgentConfig(node, deps.getAgent)
     let user = render(node.config.prompt, ctx, ctx.prevText)
+    const shared = ctx.prevParts.map((part) => `### ${part.label}\n${part.output}`).join('\n\n')
+    const conversation = pipeline.interactions ? run.interactions!.filter((entry) => entry.nodeId !== node.id).map((entry) => `${entry.label}: ${entry.text}`).join('\n\n') : ''
+    const systemPrompt = [cfg.systemPrompt, shared && `Контекст от других узлов этого пайплайна:\n\n${shared}`, conversation && `Общий разговор агентов этого пайплайна. Ты видишь ответы других участников; учитывай их и явно обращайся к ним по имени, если дополняешь или оспариваешь вывод:\n\n${conversation}`].filter(Boolean).join('\n\n')
     if (extraFeedback) user += `\n\n---\n${extraFeedback}`
     const messages = [
-      ...(cfg.systemPrompt ? [{ role: 'system' as const, content: cfg.systemPrompt }] : []),
+      ...(systemPrompt ? [{ role: 'system' as const, content: systemPrompt }] : []),
       { role: 'user' as const, content: user },
     ]
+    update(node.id, { prompt: user, systemPrompt })
     const models = [cfg.model, ...(node.config.fallbackModels ?? []).filter(Boolean)]
     const retries = Math.max(0, Math.min(node.config.retries ?? 1, 5))
     let lastError = 'Неизвестная ошибка'
@@ -354,12 +366,18 @@ export async function runPipeline(
 
   const execute = async (node: PipelineNode): Promise<Partial<NodeRun>> => {
     const ctx = contextFor(node)
+    update(node.id, { received: ctx.prevParts })
     switch (node.kind) {
       case 'input':
         return { output: input }
 
       case 'agent': {
         const res = await callAgent(node, ctx)
+        if (pipeline.interactions) {
+          const entry = { nodeId: node.id, label: node.label, text: res.text, at: Date.now() }
+          run.interactions!.push(entry)
+          hooks.onInteraction?.(entry)
+        }
         return { output: res.text, usage: res.usage, model: res.model }
       }
 
@@ -514,7 +532,7 @@ export async function runPipeline(
   }
 
   // Планировщик: запускаем узел, как только все его входы завершились
-  const concurrency = Math.max(1, opts.concurrency ?? DEFAULT_CONCURRENCY)
+  const concurrency = pipeline.interactions ? 1 : Math.max(1, opts.concurrency ?? DEFAULT_CONCURRENCY)
   const running = new Set<Promise<void>>()
   const started = new Set<string>()
   let fatal: Error | null = null
