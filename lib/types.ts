@@ -92,6 +92,35 @@ export interface LLMResult {
   aborted?: boolean
 }
 
+// ─── Модели решений (OpenRouter Decisions API) ──────────────────────────
+// Отвечают не текстом, а решением с вероятностями: выбор варианта, да/нет,
+// оценка по шкале. Подходят для маршрутизации и проверок.
+
+export type DecisionQuestion =
+  | { type: 'choice'; instructions?: string; criteria: Record<string, string> }
+  | { type: 'noul'; instructions?: string; criteria?: { true?: string; false?: string } }
+  | { type: 'score'; instructions?: string; criteria: string[] }
+
+export type DecisionAnswer =
+  | { type: 'choice'; choice: string; probabilities: Record<string, number>; confidence: number }
+  | { type: 'noul'; noul: number; confidence: number }
+  | { type: 'score'; score: number; probabilities: Record<string, number>; confidence: number }
+  | { type: 'refusal' }
+
+export interface DecideRequest {
+  model: string
+  state: string | Record<string, unknown>
+  questions: Record<string, DecisionQuestion>
+}
+
+export interface DecideResult {
+  answers: Record<string, DecisionAnswer>
+  usage: Usage
+  model: string
+  latencyMs: number
+  error?: string
+}
+
 // ─── Статус сервера ──────────────────────────────────────────────────────
 
 export interface ServerStatus {

@@ -1,4 +1,4 @@
-import type { LLMEvent, LLMRequest, LLMResult } from '../types'
+import type { DecideRequest, DecideResult, LLMEvent, LLMRequest, LLMResult } from '../types'
 
 // Контракт вызова модели для движков. В браузере его реализует
 // lib/client/llm.ts (поток /api/llm), в тестах — заглушка.
@@ -13,6 +13,9 @@ export interface LLMCallOptions {
 export type UsageSource = 'chat' | 'pipeline' | 'debate' | 'scenario' | 'judge' | 'system'
 
 export type LLMCall = (req: LLMRequest, opts?: LLMCallOptions) => Promise<LLMResult>
+
+/** Вызов модели решений; модель выбирается в настройках. Есть только если она включена */
+export type DecideCall = (req: Omit<DecideRequest, 'model'>, opts?: Pick<LLMCallOptions, 'signal' | 'meta'>) => Promise<DecideResult>
 
 export class AbortedError extends Error {
   constructor() {

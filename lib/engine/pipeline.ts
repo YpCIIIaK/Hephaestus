@@ -3,7 +3,10 @@ import { asString, extractJson } from '../json'
 import { addUsage, ZERO_USAGE } from '../models'
 import { renderTemplate } from '../template'
 import type { LLMEvent, LLMResult, ToolsetId, ToolTrace, Usage } from '../types'
-import { isAbort, throwIfAborted, type LLMCall } from './llm'
+import { isAbort, throwIfAborted, type DecideCall, type LLMCall } from './llm'
+
+/** С какой вероятностью «да» модель решений принимает ответ без LLM; ниже — решает LLM и пишет замечания */
+const DECIDER_PASS = 0.7
 
 // ─── Модель графа ────────────────────────────────────────────────────────
 
@@ -111,6 +114,8 @@ export interface PipelineRun {
 
 export interface PipelineDeps {
   llm: LLMCall
+  /** Модель решений для маршрутизаторов и проверок; без неё решает LLM */
+  decide?: DecideCall
   tool: (name: string, args: Record<string, unknown>, signal?: AbortSignal) => Promise<{ ok: boolean; output: string }>
   getAgent: (id: string) => Agent | undefined
 }
@@ -439,6 +444,30 @@ export async function runPipeline(
             ) ?? routes[routes.length - 1]
           return { output: text, route: hit.id, note: `→ ${hit.label}` }
         }
+        // Модель решений выбирает ветку сразу с вероятностью — без генерации и разбора JSON
+        if (deps.decide) {
+          const d = await deps.decide(
+            {
+              state: text.slice(0, 32_000),
+              questions: {
+                route: {
+                  type: 'choice',
+                  instructions: 'Какой ветке обработки лучше всего подходит этот текст?',
+                  criteria: Object.fromEntries(routes.map((r) => [r.id, `${r.label}${r.keywords ? `: ${r.keywords}` : ''}`])),
+                },
+              },
+            },
+            { signal, meta: { source: 'pipeline', label: node.label } },
+          )
+          addRunUsage(d.usage)
+          throwIfAborted(signal)
+          const a = d.answers.route
+          const chosen = a?.type === 'choice' ? routes.find((r) => r.id === a.choice) : undefined
+          if (!d.error && chosen) {
+            const p = a?.type === 'choice' ? (a.probabilities[a.choice] ?? a.confidence) : 0
+            return { output: text, route: chosen.id, usage: d.usage, note: `→ ${chosen.label} (модель решений, ${Math.round(p * 100)}%)` }
+          }
+        }
         const cfg = effectiveAgentConfig(node, deps.getAgent)
         const list = routes.map((r, i) => `${i + 1}. ${r.label}${r.keywords ? ` — ${r.keywords}` : ''}`).join('\n')
         const res = await deps.llm(
@@ -480,6 +509,28 @@ export async function runPipeline(
         for (let attempt = 1; attempt <= maxAttempts + 1; attempt++) {
           throwIfAborted(signal)
           update(node.id, { attempts: attempt, note: `Проверка ${attempt}` })
+          // Модель решений принимает хороший ответ сразу; замечания для доработки пишет только LLM
+          if (deps.decide) {
+            const d = await deps.decide(
+              {
+                state: { request: input.slice(0, 16_000), criteria, answer: candidate.slice(0, 32_000) },
+                questions: {
+                  pass: {
+                    type: 'noul',
+                    instructions: 'Соответствует ли answer критериям criteria и отвечает ли на request?',
+                    criteria: { true: 'Ответ выполняет все критерии и отвечает на запрос.', false: 'Есть нарушения критериев, ошибки или ответ не по запросу.' },
+                  },
+                },
+              },
+              { signal, meta: { source: 'pipeline', label: node.label } },
+            )
+            addRunUsage(d.usage)
+            throwIfAborted(signal)
+            const a = d.answers.pass
+            if (!d.error && a?.type === 'noul' && a.noul >= DECIDER_PASS) {
+              return { output: candidate, attempts: attempt, note: `Принято с ${attempt}-й попытки (модель решений, ${Math.round(a.noul * 100)}%)` }
+            }
+          }
           const res = await deps.llm(
             {
               model: node.config.model || '@smart',

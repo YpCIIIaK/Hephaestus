@@ -11,6 +11,8 @@ export interface Settings {
   limits: { dailyUsd: number; monthlyUsd: number }
   /** Только бесплатные модели: автовыбор ролей берёт модели с нулевой ценой, платные запросы блокируются */
   freeOnly: boolean
+  /** Модель решений (OpenRouter Decisions API) для маршрутизаторов и проверок; платная, включается явно */
+  decider: { enabled: boolean; model: string }
   chat: {
     targets: { kind: 'model' | 'agent' | 'pipeline'; id: string }[]
     tools: ToolsetId[]
@@ -37,6 +39,7 @@ export const DEFAULT_SETTINGS: Settings = {
   favorites: [],
   limits: { dailyUsd: 5, monthlyUsd: 50 },
   freeOnly: false,
+  decider: { enabled: false, model: 'perplexity/pplx-decider-v1.2' },
   chat: {
     targets: [{ kind: 'model', id: '@default' }],
     tools: [],
@@ -66,7 +69,7 @@ export const useSettings = create<SettingsStore>()(
       version: 1,
       merge: (persisted, current) => {
         const p = (persisted ?? {}) as Partial<Settings>
-        return { ...current, ...p, chat: { ...current.chat, ...p.chat }, limits: { ...current.limits, ...p.limits }, aliases: { ...current.aliases, ...p.aliases } }
+        return { ...current, ...p, chat: { ...current.chat, ...p.chat }, limits: { ...current.limits, ...p.limits }, aliases: { ...current.aliases, ...p.aliases }, decider: { ...current.decider, ...p.decider } }
       },
     },
   ),

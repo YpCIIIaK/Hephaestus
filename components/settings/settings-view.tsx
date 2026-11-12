@@ -192,7 +192,55 @@ function Models() {
           {loading ? <Spinner /> : <RefreshCw />} Обновить каталог
         </Button>
       </div>
+      <DeciderSettings />
     </Section>
+  )
+}
+
+/** Модели решений OpenRouter, проверенные через их страницы эндпоинтов */
+const DECIDER_MODELS = [
+  { id: 'perplexity/pplx-decider-v1.2', label: 'Perplexity Decider V1.2', price: '$0,02 за 1M входных токенов' },
+  { id: 'typesafe/jev-1.14', label: 'TypeSafe Jev 1.14', price: '$0,042 за 1M входных токенов' },
+]
+
+function DeciderSettings() {
+  const decider = useSettings((s) => s.decider)
+  const freeOnly = useSettings((s) => s.freeOnly)
+  const set = useSettings((s) => s.set)
+  const update = (patch: Partial<typeof decider>) => set({ decider: { ...decider, ...patch } })
+  return (
+    <div className="space-y-3 border-t border-border pt-4">
+      <label className="flex items-center justify-between gap-4 text-[13px]">
+        <span>
+          Модель решений (decider)
+          <span className="block text-xs text-muted">
+            Маршрутизаторы и проверки в пайплайнах решают не текстом, а выбором с вероятностью: быстрее и надёжнее, чем просить LLM вернуть JSON. Если модель решений недоступна, решает LLM, как раньше.
+          </span>
+        </span>
+        <Switch checked={decider.enabled} onCheckedChange={(enabled) => update({ enabled })} />
+      </label>
+      {decider.enabled && (
+        <div className="space-y-2">
+          <div className="flex flex-wrap gap-1.5">
+            {DECIDER_MODELS.map((m) => (
+              <button
+                key={m.id}
+                onClick={() => update({ model: m.id })}
+                className={cn('rounded-lg border px-2.5 py-1.5 text-left text-xs', decider.model === m.id ? 'border-accent bg-accent-soft' : 'border-border text-muted hover:border-border-strong')}
+              >
+                <div className="font-medium text-fg">{m.label}</div>
+                <div>{m.price}</div>
+              </button>
+            ))}
+          </div>
+          <Input value={decider.model} onChange={(e) => update({ model: e.target.value.trim() })} placeholder="id модели решений, например perplexity/pplx-decider-v1.2" className="font-mono" />
+          <p className="text-xs text-muted">
+            Модели решений платные, но очень дешёвые: одно решение — сотни входных токенов, тысячные доли цента. Расход учитывается в аналитике и лимитах.
+            {freeOnly && ' Режим «Только бесплатные модели» на них не распространяется: включая этот переключатель, вы разрешаете эти расходы.'}
+          </p>
+        </div>
+      )}
+    </div>
   )
 }
 

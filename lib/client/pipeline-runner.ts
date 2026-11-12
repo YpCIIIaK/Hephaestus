@@ -5,6 +5,7 @@ import { runPipeline, type NodeRun, type Pipeline, type PipelineNode } from '../
 import { getAgent } from '../stores/agents'
 import { usePipelines } from '../stores/pipelines'
 import { uid } from '../utils'
+import { getDecider } from './decide'
 import { callLLMSafe, callTool } from './llm'
 
 // Запуск пайплайна из редактора: состояние узлов пишется в историю запусков,
@@ -91,7 +92,7 @@ export async function startPipeline(pipeline: Pipeline, input: string, step = fa
     const run = await runPipeline(
       pipeline,
       input,
-      { llm: callLLMSafe, tool: callTool, getAgent },
+      { llm: callLLMSafe, tool: callTool, getAgent, decide: getDecider() },
       { onNode, beforeNode, onInteraction: (entry) => {
         const current = usePipelines.getState().runs.find((r) => r.id === runId)
         usePipelines.getState().patchRun(runId, { interactions: [...(current?.interactions ?? []), entry] })
