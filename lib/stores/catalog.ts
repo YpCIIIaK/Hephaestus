@@ -2,7 +2,7 @@
 
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
-import { isAlias, pickAliasModel } from '../models'
+import { EFFORT_LABELS, isAlias, pickAliasModel, splitEffort } from '../models'
 import type { ModelAlias, ModelInfo, ServerStatus } from '../types'
 import { useSettings } from './settings'
 import { persistStorage } from './storage'
@@ -66,8 +66,15 @@ export function usableModels(models: ModelInfo[], unavailable: CatalogStore['una
   return models.filter((m) => !(unavailable[m.id] && now - unavailable[m.id].at < UNAVAILABLE_TTL_MS))
 }
 
+/** Модель каталога; для «модель@усилие» — та же модель с усилием в названии */
 export function modelById(id: string): ModelInfo | undefined {
-  return useCatalog.getState().models.find((m) => m.id === id)
+  return findIn(useCatalog.getState().models, id)
+}
+
+export function findIn(models: ModelInfo[], id: string): ModelInfo | undefined {
+  const { base, effort } = splitEffort(id)
+  const info = models.find((m) => m.id === base)
+  return info && effort ? { ...info, id, name: `${info.name} · ${EFFORT_LABELS[effort].short}` } : info
 }
 
 /** Псевдоним → реальная модель: явный выбор в настройках или автоподбор по каталогу */
@@ -84,7 +91,7 @@ export function useResolvedModel(id: string): { id: string | null; info?: ModelI
   const models = useCatalog((s) => s.models)
   const unavailable = useCatalog((s) => s.unavailable)
   const freeOnly = useSettings((s) => s.freeOnly)
-  if (!isAlias(id)) return { id, info: models.find((m) => m.id === id) }
+  if (!isAlias(id)) return { id, info: findIn(models, id) }
   const real = aliases[id as ModelAlias] || pickAliasModel(id as ModelAlias, usableModels(models, unavailable), freeOnly)
-  return { id: real, info: real ? models.find((m) => m.id === real) : undefined }
+  return { id: real, info: real ? findIn(models, real) : undefined }
 }

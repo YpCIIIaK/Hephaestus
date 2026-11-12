@@ -1,5 +1,5 @@
 import type { ModelInfo } from '../types'
-import { CUSTOM_PREFIX, OLLAMA_PREFIX } from '../models'
+import { CUSTOM_PREFIX, OLLAMA_PREFIX, splitEffort } from '../models'
 import { getCustomEndpoint, getOllamaUrl, getOpenRouterKey } from './settings'
 import { subscriptionModels } from './subscriptions'
 
@@ -43,6 +43,8 @@ async function fetchOpenRouter(refresh: boolean): Promise<ModelInfo[]> {
       pricing: Number.isFinite(prompt) && Number.isFinite(completion) && prompt >= 0 && completion >= 0 ? { prompt, completion } : undefined,
       supportsTools: m.supported_parameters?.includes('tools'),
       supportsReasoning: m.supported_parameters?.includes('reasoning'),
+      // Усилие рассуждений у OpenRouter: reasoning.effort
+      efforts: m.supported_parameters?.includes('reasoning') ? ['low', 'medium', 'high', 'xhigh'] : undefined,
     }
   })
   openrouterCache = { at: Date.now(), models }
@@ -99,18 +101,20 @@ export async function getCatalog(refresh = false): Promise<CatalogResult> {
       return []
     }
   }
-  const [remote, local, custom, subs] = await Promise.all([
+  const [remote, local, custom] = await Promise.all([
     settle(fetchOpenRouter(refresh), 'OpenRouter'),
     settle(fetchOllamaModels(), 'Ollama'),
     settle(fetchCustomModels(), 'Свой сервер'),
-    settle(subscriptionModels(), 'Подписки'),
   ])
+  // Модели Claude для подписки берём из каталога OpenRouter — там все свежие версии
+  const subs = await settle(subscriptionModels(remote), 'Подписки')
   // Ollama, который просто не запущен, — нормальная ситуация, не ошибка
   const filtered = errors.filter((e) => !e.startsWith('Ollama'))
   return { models: [...subs, ...local, ...custom, ...remote], errors: filtered }
 }
 
-export async function findModel(id: string): Promise<ModelInfo | undefined> {
+export async function findModel(rawId: string): Promise<ModelInfo | undefined> {
+  const id = splitEffort(rawId).base
   if (openrouterCache) return openrouterCache.models.find((m) => m.id === id)
   try {
     return (await fetchOpenRouter(false)).find((m) => m.id === id)

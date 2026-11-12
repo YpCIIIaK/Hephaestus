@@ -1,5 +1,5 @@
 import type { LLMEvent, LLMMessage, LLMRequest, ToolCall, Usage } from '../types'
-import { addUsage, computeCost, isSubscriptionModel, providerOf, upstreamModelId, ZERO_USAGE } from '../models'
+import { addUsage, computeCost, isSubscriptionModel, providerOf, splitEffort, upstreamModelId, ZERO_USAGE } from '../models'
 import { SSEParser } from '../sse'
 import { findModel } from './catalog'
 import { getCustomEndpoint, getOllamaUrl, getOpenRouterKey } from './settings'
@@ -372,6 +372,9 @@ export async function* runLLM(req: LLMRequest, signal?: AbortSignal): AsyncGener
       body.tool_choice = 'auto'
     }
     if (jsonMode) body.response_format = { type: 'json_object' }
+    // Усилие из id модели («…@high»); после пустого ответа из-за рассуждений — низкое
+    const effort = splitEffort(req.model).effort
+    if (effort && ep.provider === 'openrouter') body.reasoning = { effort: effort === 'max' || effort === 'ultra' ? 'xhigh' : effort }
     if (lowReasoning && ep.provider === 'openrouter') body.reasoning = { effort: 'low' }
 
     let result: StepResult

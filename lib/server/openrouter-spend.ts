@@ -12,6 +12,8 @@ export interface OpenRouterSpend {
   total: number
   limit: number | null
   remaining: number | null
+  /** Остаток на счёте OpenRouter (пополнено минус потрачено), если ключ может его прочитать */
+  balance?: number | null
   fetchedAt: number
 }
 
@@ -41,9 +43,23 @@ export async function getOpenRouterSpend(force = false): Promise<OpenRouterSpend
     const res = await fetch('https://openrouter.ai/api/v1/key', { headers: { Authorization: `Bearer ${key}` }, signal: AbortSignal.timeout(10_000) })
     if (!res.ok) throw new Error(String(res.status))
     const { data } = (await res.json()) as { data?: Record<string, unknown> }
-    cache = { at: Date.now(), value: data ? parseKeyInfo(data) : null }
+    const value = data ? parseKeyInfo(data) : null
+    if (value) value.balance = await fetchBalance(key)
+    cache = { at: Date.now(), value }
   } catch {
     cache = { at: Date.now(), value: cache?.value ?? null }
   }
   return cache.value
+}
+
+/** Баланс счёта: /credits отдаёт сумму пополнений и расходов всего аккаунта */
+async function fetchBalance(key: string): Promise<number | null> {
+  try {
+    const res = await fetch('https://openrouter.ai/api/v1/credits', { headers: { Authorization: `Bearer ${key}` }, signal: AbortSignal.timeout(10_000) })
+    if (!res.ok) return null
+    const { data } = (await res.json()) as { data?: { total_credits?: number; total_usage?: number } }
+    return typeof data?.total_credits === 'number' && typeof data.total_usage === 'number' ? data.total_credits - data.total_usage : null
+  } catch {
+    return null
+  }
 }

@@ -474,13 +474,13 @@ const SUB_INFO: Record<'claude-code' | 'codex', { title: string; install: string
     title: 'Claude Code — подписка Claude Pro/Max',
     install: 'npm i -g @anthropic-ai/claude-code',
     login: 'запустите claude в терминале и выполните /login',
-    models: 'Алиасы fable, opus, sonnet, haiku или полные имена моделей',
+    models: 'Все свежие модели Anthropic появляются в списке сами. Сюда — только если нужной там нет (полное имя, например claude-opus-5-5)',
   },
   codex: {
     title: 'Codex — подписка ChatGPT',
     install: 'npm i -g @openai/codex',
     login: 'codex login',
-    models: 'Имена моделей Codex; default — модель по умолчанию из настроек Codex',
+    models: 'Список берётся из самого Codex. Сюда — только если нужной там нет',
   },
 }
 
@@ -682,7 +682,7 @@ function SubscriptionsSection() {
             <SubscriptionAuth id={s.id} onChanged={refreshStatus} />
             {s.enabled && (
               <>
-                <FieldRow label="Модели" hint={info.models}>
+                <FieldRow label="Дополнительные модели" hint={info.models}>
                   <div className="flex gap-2">
                     <Input value={d.models ?? s.models.join(', ')} onChange={(e) => setDrafts({ ...drafts, [s.id]: { ...d, models: e.target.value } })} className="font-mono" />
                     <Button disabled={busy || d.models == null} onClick={() => void save(subsBody(s.id, { models: d.models }))}>

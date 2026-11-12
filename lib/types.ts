@@ -16,9 +16,14 @@ export interface ModelInfo {
   pricing?: { prompt: number; completion: number }
   supportsTools?: boolean
   supportsReasoning?: boolean
+  /** Уровни усилия рассуждений, которые можно выбрать (id модели получает суффикс @уровень) */
+  efforts?: Effort[]
   /** Unix-время публикации модели (у OpenRouter) */
   created?: number
 }
+
+/** Усилие рассуждений: от быстрого ответа до максимальной глубины */
+export type Effort = 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra'
 
 /** Псевдонимы моделей: агенты и шаблоны ссылаются на роль, а не на конкретную модель */
 export type ModelAlias = '@smart' | '@default' | '@fast'
@@ -189,4 +194,23 @@ export interface WorkspaceEntry {
   type: 'file' | 'dir'
   size?: number
   children?: WorkspaceEntry[]
+}
+
+// ─── Лимиты ──────────────────────────────────────────────────────────────
+
+export interface LimitWindow {
+  key: string
+  /** «5 часов», «неделя»… */
+  label: string
+  usedPercent?: number
+  resetsAt?: number
+  status: 'ok' | 'warning' | 'exhausted'
+  updatedAt: number
+  note?: string
+}
+
+export interface SubscriptionLimits {
+  id: 'claude-code' | 'codex'
+  windows: LimitWindow[]
+  updatedAt: number
 }

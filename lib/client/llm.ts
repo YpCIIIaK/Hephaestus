@@ -1,7 +1,7 @@
 'use client'
 
 import type { LLMCall, LLMCallOptions } from '../engine/llm'
-import { ALIAS_LABELS, isAlias, isFreeModel, newestFreeModels, providerOf } from '../models'
+import { ALIAS_LABELS, isAlias, isFreeModel, isSubscriptionModel, newestFreeModels, providerOf } from '../models'
 import { NDJSONParser } from '../sse'
 import { modelById, resolveModelId, usableModels, useCatalog } from '../stores/catalog'
 import { useSettings } from '../stores/settings'
@@ -123,7 +123,9 @@ const callLLMOnce: LLMCall = async (req: LLMRequest, opts: LLMCallOptions = {}):
     })
   }
   // Сверка с OpenRouter в фоне, не чаще раза в минуту — для лимитов и аналитики
+  // Живые лимиты: после запроса OpenRouter — расход ключа, после подписки — её окна лимитов
   if (providerOf(model) === 'openrouter') void useUsage.getState().refreshOpenRouter()
+  else if (isSubscriptionModel(model)) void useUsage.getState().refreshOpenRouter(true)
   return { text, reasoning, tools, usage: finalUsage, model, latencyMs, error: aborted ? undefined : error, aborted }
 }
 

@@ -4,10 +4,10 @@ import { Check, ChevronDown, Cpu, RefreshCw, Search, Sparkles, Star, Wrench } fr
 import { useDeferredValue, useMemo, useState } from 'react'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/overlay'
 import { Segmented, Spinner } from '@/components/ui/misc'
-import { ALIAS_LABELS, isAlias, shortModelName, vendorLabel } from '@/lib/models'
+import { ALIAS_LABELS, EFFORT_LABELS, isAlias, shortModelName, splitEffort, vendorLabel, withEffort } from '@/lib/models'
 import { useCatalog, useResolvedModel } from '@/lib/stores/catalog'
 import { useSettings } from '@/lib/stores/settings'
-import type { ModelAlias, ModelInfo } from '@/lib/types'
+import type { Effort, ModelAlias, ModelInfo } from '@/lib/types'
 import { cn, formatPricePerM, formatTokens } from '@/lib/utils'
 
 export function ModelName({ id, className, showAliasTarget = true }: { id: string; className?: string; showAliasTarget?: boolean }) {
@@ -34,13 +34,17 @@ function priceLine(m: ModelInfo) {
   return `${formatPricePerM(m.pricing.prompt)} / ${formatPricePerM(m.pricing.completion)} за 1M`
 }
 
-function ModelRow({ m, selected, fav, onPick, onFav }: { m: ModelInfo; selected: boolean; fav: boolean; onPick: () => void; onFav: () => void }) {
+/**
+ * Строка модели. Клик — модель с усилием по умолчанию; кнопки low…max справа —
+ * та же модель с выбранным усилием рассуждений (id получает суффикс @уровень).
+ */
+function ModelRow({ m, selected, effort, fav, onPick, onFav }: { m: ModelInfo; selected: boolean; effort?: Effort; fav: boolean; onPick: (effort?: Effort) => void; onFav: () => void }) {
   return (
     <div
       role="option"
       aria-selected={selected}
       tabIndex={0}
-      onClick={onPick}
+      onClick={() => onPick()}
       onKeyDown={(e) => e.key === 'Enter' && onPick()}
       className={cn('group flex cursor-pointer items-center gap-2.5 rounded-lg px-2.5 py-1.5 outline-none hover:bg-surface-2 focus-visible:bg-surface-2', selected && 'bg-accent-soft hover:bg-accent-soft')}
     >
@@ -55,6 +59,24 @@ function ModelRow({ m, selected, fav, onPick, onFav }: { m: ModelInfo; selected:
           {m.contextLength ? ` · ${formatTokens(m.contextLength)} контекст` : ''}
         </div>
       </div>
+      {m.efforts?.length ? (
+        <div className={cn('flex shrink-0 gap-0.5', !selected && 'opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100')}>
+          {m.efforts.map((e) => (
+            <button
+              key={e}
+              type="button"
+              title={EFFORT_LABELS[e].title}
+              onClick={(ev) => {
+                ev.stopPropagation()
+                onPick(e)
+              }}
+              className={cn('rounded px-1 py-0.5 font-mono text-[10px] leading-none', selected && effort === e ? 'bg-accent text-accent-fg' : 'text-faint hover:bg-surface-3 hover:text-fg')}
+            >
+              {EFFORT_LABELS[e].short}
+            </button>
+          ))}
+        </div>
+      ) : null}
       <button
         type="button"
         onClick={(e) => {
@@ -95,6 +117,9 @@ export function ModelList({ value, onPick, allowAliases = true, multi }: { value
     }
     return Array.from(groups.entries())
   }, [models, filter, favorites, q])
+
+  // Выбранная модель с учётом усилия: «claude-code/opus@max» подсвечивает строку opus и кнопку max
+  const selectedOf = (id: string) => value.map(splitEffort).find((v) => v.base === id)
 
   const custom = q && !models.some((m) => m.id.toLowerCase() === q) && /^[\w.-]+\/[\w.:@-]+$/.test(query.trim()) ? query.trim() : null
 
@@ -152,7 +177,15 @@ export function ModelList({ value, onPick, allowAliases = true, multi }: { value
           <div key={group} className="mb-1">
             <div className="px-2.5 pb-1 pt-2 text-[11px] font-semibold uppercase tracking-wider text-faint">{group}</div>
             {list.map((m) => (
-              <ModelRow key={m.id} m={m} selected={value.includes(m.id)} fav={favorites.includes(m.id)} onPick={() => onPick(m.id)} onFav={() => toggleFavorite(m.id)} />
+              <ModelRow
+                key={m.id}
+                m={m}
+                selected={!!selectedOf(m.id)}
+                effort={selectedOf(m.id)?.effort}
+                fav={favorites.includes(m.id)}
+                onPick={(e) => onPick(withEffort(m.id, e))}
+                onFav={() => toggleFavorite(m.id)}
+              />
             ))}
           </div>
         ))}

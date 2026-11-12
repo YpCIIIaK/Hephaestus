@@ -10,8 +10,9 @@ import { Sheet, Tip } from '@/components/ui/overlay'
 import { useCatalog } from '@/lib/stores/catalog'
 import { useHydrated } from '@/lib/stores/hydration'
 import { useSettings } from '@/lib/stores/settings'
-import { useSpend } from '@/lib/stores/usage'
-import { cn, formatCost } from '@/lib/utils'
+import { useSpend, useUsage } from '@/lib/stores/usage'
+import type { LimitWindow, SubscriptionLimits } from '@/lib/types'
+import { cn, formatCost, formatRelative } from '@/lib/utils'
 import { CommandPalette, useCommandPalette } from './command-palette'
 import { NAV, SETTINGS_NAV, type NavItem } from './nav'
 import { SetupBanner } from './setup-banner'
@@ -67,14 +68,92 @@ function RailLink({ item, active }: { item: NavItem; active: boolean }) {
   )
 }
 
+const SUB_SHORT: Record<SubscriptionLimits['id'], string> = { 'claude-code': 'Claude', codex: 'GPT' }
+
+function untilText(ms?: number): string {
+  if (!ms) return ''
+  const min = Math.max(0, Math.round((ms - Date.now()) / 60_000))
+  if (min < 60) return `сброс через ${min} мин`
+  if (min < 48 * 60) return `сброс через ${Math.floor(min / 60)} ч ${min % 60} мин`
+  return `сброс через ${Math.round(min / 1440)} дн`
+}
+
+/** Самое загруженное окно лимита подписки — его и показываем в узкой панели */
+function worstWindow(l: SubscriptionLimits): LimitWindow | undefined {
+  const rank = (w: LimitWindow) => (w.status === 'exhausted' ? 1000 : 0) + (w.usedPercent ?? (w.status === 'warning' ? 80 : 0))
+  return [...l.windows].sort((a, b) => rank(b) - rank(a))[0]
+}
+
+/**
+ * Живые лимиты внизу панели: расход за сегодня, остаток OpenRouter и
+ * загрузка лимитов подписок. Обновляется после каждого запроса и раз в 30 с.
+ */
 function SpendWidget({ compact }: { compact?: boolean }) {
   const { today } = useSpend()
   const daily = useSettings((s) => s.limits.dailyUsd)
+  const openrouter = useUsage((s) => s.openrouter)
+  const subs = useUsage((s) => s.subscriptions)
+  const refresh = useUsage((s) => s.refreshOpenRouter)
+  const [, tick] = useState(0)
+  useEffect(() => {
+    void refresh()
+    const t = setInterval(() => {
+      if (document.visibilityState === 'visible') void refresh()
+      tick((n) => n + 1)
+    }, 30_000)
+    return () => clearInterval(t)
+  }, [refresh])
+
+  const spentToday = openrouter ? Math.max(openrouter.daily, today) : today
+  const left = openrouter?.balance ?? openrouter?.remaining ?? null
+  const details = (
+    <div className="max-w-64 space-y-2 text-xs">
+      <div>
+        <div className="font-semibold">OpenRouter</div>
+        <div>
+          Сегодня: {formatCost(spentToday)}
+          {daily ? ` из лимита ${formatCost(daily)}` : ''}
+        </div>
+        {openrouter && <div>За месяц: {formatCost(openrouter.monthly)}</div>}
+        {openrouter?.balance != null && <div>Баланс счёта: {formatCost(openrouter.balance)}</div>}
+        {openrouter?.remaining != null && <div>Остаток лимита ключа: {formatCost(openrouter.remaining)}</div>}
+      </div>
+      {subs.map((l) => (
+        <div key={l.id}>
+          <div className="font-semibold">Подписка {SUB_SHORT[l.id]}</div>
+          {l.windows.length ? (
+            l.windows.map((w) => (
+              <div key={w.key}>
+                {w.label}: {w.usedPercent != null ? `${Math.round(w.usedPercent)}%` : w.status === 'exhausted' ? 'исчерпан' : w.status === 'warning' ? 'близко к лимиту' : 'в норме'}
+                {w.resetsAt ? ` · ${untilText(w.resetsAt)}` : ''}
+              </div>
+            ))
+          ) : (
+            <div className="text-faint">Данных пока нет — появятся после первого запроса через подписку</div>
+          )}
+          {l.updatedAt > 0 && <div className="text-faint">обновлено {formatRelative(l.updatedAt)}</div>}
+        </div>
+      ))}
+    </div>
+  )
   return (
-    <Tip content={`Сегодня потрачено ${formatCost(today)}${daily ? ` из лимита $${daily}` : ''}`} side="right">
-      <Link href="/analytics" className={cn('flex w-full flex-col items-center gap-1.5 rounded-xl px-2 py-2 hover:bg-surface-2', compact && 'flex-row px-3')}>
-        <span className="font-mono text-[11px] tabular-nums text-muted">{formatCost(today)}</span>
-        {daily > 0 && <Meter value={today} max={daily} className="h-1 w-10" />}
+    <Tip content={details} side="right">
+      <Link href="/analytics" className={cn('flex w-full flex-col items-center gap-1.5 rounded-xl px-2 py-2 hover:bg-surface-2', compact && 'flex-row flex-wrap justify-center px-3')}>
+        <span className="font-mono text-[11px] tabular-nums text-muted">{formatCost(spentToday)}</span>
+        {daily > 0 && <Meter value={spentToday} max={daily} className="h-1 w-10" />}
+        {left != null && <span className="font-mono text-[9.5px] tabular-nums text-faint">ост. {formatCost(left)}</span>}
+        {subs.map((l) => {
+          const w = worstWindow(l)
+          const pct = w?.usedPercent ?? (w?.status === 'exhausted' ? 100 : undefined)
+          return (
+            <span key={l.id} className="flex w-11 flex-col items-center gap-0.5">
+              <span className={cn('text-[9.5px] leading-none', w?.status === 'exhausted' ? 'text-danger' : w?.status === 'warning' ? 'text-warning' : 'text-faint')}>
+                {SUB_SHORT[l.id]} {pct != null ? `${Math.round(pct)}%` : '—'}
+              </span>
+              {pct != null && <Meter value={pct} max={100} className="h-1 w-10" />}
+            </span>
+          )
+        })}
       </Link>
     </Tip>
   )

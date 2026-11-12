@@ -2,9 +2,10 @@ import { spawn } from 'node:child_process'
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import { CLAUDE_CODE_PREFIX, CODEX_PREFIX, providerOf, upstreamModelId } from '../models'
-import type { LLMEvent, LLMMessage, LLMRequest, ModelInfo, ToolsetId, Usage } from '../types'
+import { CLAUDE_CODE_PREFIX, CODEX_PREFIX, providerOf, splitEffort, upstreamModelId, withEffort } from '../models'
+import type { Effort, LLMEvent, LLMMessage, LLMRequest, ModelInfo, ToolsetId, Usage } from '../types'
 import { sessionContext } from './sessions'
+import { parseLimitLine, recordExhausted, recordLimits } from './sub-limits'
 import { getTerminalSettings, getToolsDir, getWorkspaceDir, loadServerSettings } from './settings'
 import { toolsEnv } from './terminal'
 
@@ -16,10 +17,12 @@ import { toolsEnv } from './terminal'
 
 export type SubscriptionId = 'claude-code' | 'codex'
 
-export const DEFAULT_SUBSCRIPTION_MODELS: Record<SubscriptionId, string[]> = {
-  'claude-code': ['fable', 'opus', 'sonnet', 'haiku'],
-  codex: ['default'],
-}
+/** Алиасы Claude Code — всегда последняя версия семейства */
+const CLAUDE_ALIASES = ['fable', 'opus', 'sonnet', 'haiku']
+/** Уровни усилия Claude Code (флаг --effort) */
+export const CLAUDE_EFFORTS: Effort[] = ['low', 'medium', 'high', 'xhigh', 'max']
+/** Модели Anthropic из каталога старше этого в подписке обычно уже недоступны */
+const CLAUDE_MAX_AGE_DAYS = 400
 
 const LABELS: Record<SubscriptionId, string> = { 'claude-code': 'Claude Code (подписка)', codex: 'Codex (подписка ChatGPT)' }
 const MAX_RUN_MS = 60 * 60_000
@@ -28,7 +31,7 @@ export interface SubscriptionSettings {
   enabled?: boolean
   /** Команда или путь к CLI; по умолчанию claude / codex */
   bin?: string
-  /** Модели через запятую: алиасы или полные имена */
+  /** Дополнительные модели через запятую — если какой-то нет в автоматическом списке */
   models?: string
 }
 
@@ -38,17 +41,19 @@ export async function subscriptionConfig(id: SubscriptionId): Promise<{ enabled:
     .split(/[,\s]+/)
     .map((m) => m.trim())
     .filter(Boolean)
-  return { enabled: !!s.enabled, bin: s.bin?.trim() || (id === 'codex' ? 'codex' : 'claude'), models: models.length ? models : DEFAULT_SUBSCRIPTION_MODELS[id] }
+  return { enabled: !!s.enabled, bin: s.bin?.trim() || (id === 'codex' ? 'codex' : 'claude'), models }
 }
 
 /** Куда на самом деле отправить запрос: модель OpenRouter можно перенаправить на подписку */
 export async function routeModel(model: string): Promise<string> {
   const routes = (await loadServerSettings()).subscriptionRoutes ?? {}
-  const target = routes[model]
+  const { base, effort } = splitEffort(model)
+  const target = routes[base]
   if (!target) return model
   const p = providerOf(target)
   if (p !== 'claude-code' && p !== 'codex') return model
-  return (await subscriptionConfig(p)).enabled ? target : model
+  // Усилие, выбранное у модели OpenRouter, сохраняется и для подписки
+  return (await subscriptionConfig(p)).enabled ? withEffort(splitEffort(target).base, effort ?? splitEffort(target).effort) : model
 }
 
 // ─── Проверка, что CLI установлен ────────────────────────────────────────
@@ -81,23 +86,95 @@ export async function cliVersion(bin: string): Promise<{ version: string | null;
   return r
 }
 
-export async function subscriptionModels(): Promise<ModelInfo[]> {
+/** «anthropic/claude-opus-5.5» → «claude-opus-5-5»: так модель называется в Claude Code */
+export function claudeCodeName(openrouterId: string): string | null {
+  const m = openrouterId.match(/^anthropic\/(claude-[a-z0-9.-]+)$/)
+  return m ? m[1].replace(/\./g, '-') : null
+}
+
+interface CodexModel {
+  slug: string
+  display_name?: string
+  description?: string
+  visibility?: string
+  priority?: number
+  supported_reasoning_levels?: { effort: string }[]
+}
+
+let codexCache: { at: number; bin: string; models: CodexModel[] } | null = null
+
+/** Каталог моделей Codex — тот, что показывает сам CLI (`codex debug models`) */
+export async function codexCatalog(bin: string): Promise<CodexModel[]> {
+  if (codexCache && codexCache.bin === bin && Date.now() - codexCache.at < 10 * 60_000) return codexCache.models
+  const out = await new Promise<string>((resolve) => {
+    const child = spawn(bin, ['debug', 'models'], { env: subscriptionEnv(), shell: process.platform === 'win32', windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] })
+    let buf = ''
+    const timer = setTimeout(() => child.kill('SIGKILL'), 20_000)
+    child.stdout.setEncoding('utf8').on('data', (d: string) => (buf += d))
+    child.on('error', () => resolve(''))
+    child.on('close', () => {
+      clearTimeout(timer)
+      resolve(buf)
+    })
+  })
+  let models: CodexModel[] = []
+  try {
+    models = ((JSON.parse(out) as { models?: CodexModel[] }).models ?? []).filter((m) => m.slug && m.visibility !== 'hide')
+  } catch {
+    models = []
+  }
+  models.sort((a, b) => (a.priority ?? 99) - (b.priority ?? 99))
+  codexCache = { at: Date.now(), bin, models }
+  return models
+}
+
+const DESCRIPTION = (cli: string) => `Через ${cli} по подписке: расход идёт из лимитов подписки, а не с баланса OpenRouter`
+
+/** Модели подписок: все свежие модели Anthropic для Claude Code, каталог самого Codex, плюс добавленные вручную */
+export async function subscriptionModels(openrouter: ModelInfo[] = []): Promise<ModelInfo[]> {
   const out: ModelInfo[] = []
-  for (const id of ['claude-code', 'codex'] as const) {
-    const cfg = await subscriptionConfig(id)
-    if (!cfg.enabled) continue
-    const prefix = id === 'codex' ? CODEX_PREFIX : CLAUDE_CODE_PREFIX
-    for (const m of cfg.models) {
-      out.push({
-        id: `${prefix}${m}`,
-        name: `${m === 'default' ? 'модель по умолчанию' : m} · ${LABELS[id]}`,
-        provider: id,
-        vendor: id,
-        description: `Через ${id === 'codex' ? 'Codex CLI' : 'Claude Code CLI'} по подписке: расход идёт из лимитов подписки, а не с баланса OpenRouter`,
-        pricing: { prompt: 0, completion: 0 },
-        supportsTools: true,
-      })
+  const seen = new Set<string>()
+  const push = (m: ModelInfo) => {
+    if (seen.has(m.id)) return
+    seen.add(m.id)
+    out.push(m)
+  }
+  const base = (id: SubscriptionId, name: string, slug: string, efforts: Effort[], extra: Partial<ModelInfo> = {}): ModelInfo => ({
+    id: `${id === 'codex' ? CODEX_PREFIX : CLAUDE_CODE_PREFIX}${slug}`,
+    name: `${name} · ${LABELS[id]}`,
+    provider: id,
+    vendor: id,
+    description: DESCRIPTION(id === 'codex' ? 'Codex CLI' : 'Claude Code CLI'),
+    pricing: { prompt: 0, completion: 0 },
+    supportsTools: true,
+    supportsReasoning: efforts.length > 0,
+    efforts,
+    ...extra,
+  })
+
+  const claude = await subscriptionConfig('claude-code')
+  if (claude.enabled) {
+    const cutoff = Date.now() / 1000 - CLAUDE_MAX_AGE_DAYS * 86400
+    const fresh = openrouter
+      .filter((m) => m.provider === 'openrouter' && m.id.startsWith('anthropic/') && !m.id.includes(':') && (m.created ?? 0) >= cutoff)
+      .sort((a, b) => (b.created ?? 0) - (a.created ?? 0))
+    for (const m of fresh) {
+      const slug = claudeCodeName(m.id)
+      if (slug) push(base('claude-code', m.name.replace(/^Anthropic:\s*/, ''), slug, CLAUDE_EFFORTS, { contextLength: m.contextLength, created: m.created }))
     }
+    for (const a of CLAUDE_ALIASES) push(base('claude-code', `${a} (последняя версия)`, a, CLAUDE_EFFORTS))
+    for (const m of claude.models) push(base('claude-code', m, m, CLAUDE_EFFORTS))
+  }
+
+  const codex = await subscriptionConfig('codex')
+  if (codex.enabled) {
+    const list = await codexCatalog(codex.bin)
+    for (const m of list) {
+      const efforts = (m.supported_reasoning_levels ?? []).map((l) => l.effort as Effort).filter((e) => (['minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'] as string[]).includes(e))
+      push(base('codex', m.display_name || m.slug, m.slug, efforts, { description: [m.description, DESCRIPTION('Codex CLI')].filter(Boolean).join(' · ') }))
+    }
+    if (!list.length) push(base('codex', 'модель по умолчанию', 'default', ['low', 'medium', 'high', 'xhigh']))
+    for (const m of codex.models) push(base('codex', m, m, ['low', 'medium', 'high', 'xhigh']))
   }
   return out
 }
@@ -138,9 +215,10 @@ export function claudeToolList(sets: ToolsetId[] | undefined, terminal: boolean)
 }
 
 /** Системный промпт — файлом: в аргументах командной строки он мог бы быть истолкован оболочкой (Windows) */
-export function claudeArgs(model: string, systemFile: string | null, tools: string[], extraDirs: string[]): string[] {
+export function claudeArgs(model: string, systemFile: string | null, tools: string[], extraDirs: string[], effort?: Effort): string[] {
   const args = ['-p', '--output-format', 'stream-json', '--verbose', '--include-partial-messages', '--no-session-persistence']
   if (model && model !== 'default') args.push('--model', model)
+  if (effort) args.push('--effort', effort === 'ultra' ? 'max' : effort === 'minimal' ? 'low' : effort)
   if (systemFile) args.push('--append-system-prompt-file', systemFile)
   // Разрешаем ровно выданные инструменты, остальное без вопросов запрещено
   args.push('--tools', tools.join(','), '--permission-mode', 'dontAsk')
@@ -149,10 +227,11 @@ export function claudeArgs(model: string, systemFile: string | null, tools: stri
   return args
 }
 
-export function codexArgs(model: string, sandbox: 'read-only' | 'workspace-write'): string[] {
+export function codexArgs(model: string, sandbox: 'read-only' | 'workspace-write', effort?: Effort): string[] {
   // Рабочая папка задаётся cwd процесса — путь в аргументы не попадает
   const args = ['exec', '--json', '--skip-git-repo-check', '--ephemeral', '-s', sandbox]
   if (model && model !== 'default') args.push('-m', model)
+  if (effort) args.push('-c', `model_reasoning_effort="${effort}"`)
   args.push('-')
   return args
 }
@@ -301,6 +380,7 @@ export async function* runSubscription(req: LLMRequest, signal?: AbortSignal): A
     return
   }
   const model = upstreamModelId(req.model)
+  const effort = splitEffort(req.model).effort
   if (!/^[\w.:@[\]-]{1,100}$/.test(model)) {
     yield { t: 'error', message: `Некорректное имя модели: ${model}`, status: 400 }
     return
@@ -324,10 +404,10 @@ export async function* runSubscription(req: LLMRequest, signal?: AbortSignal): A
       await fs.writeFile(/* turbopackIgnore: true */ systemFile, fullSystem, 'utf8')
     }
     const dirs = project && !/["%^&|<>!]/.test(getToolsDir()) ? [getToolsDir()] : []
-    args = claudeArgs(model, systemFile, claudeToolList(req.tools, terminal), dirs).map(winQuote)
+    args = claudeArgs(model, systemFile, claudeToolList(req.tools, terminal), dirs, effort).map(winQuote)
   } else {
     const write = (req.tools ?? []).some((t) => t === 'files_write' || (t === 'terminal' && terminal))
-    args = codexArgs(model, write ? 'workspace-write' : 'read-only')
+    args = codexArgs(model, write ? 'workspace-write' : 'read-only', effort)
     // У codex exec нет отдельного системного промпта — передаём инструкции в начале запроса
     if (fullSystem) input = `<instructions>\n${fullSystem}\n</instructions>\n\n${prompt}`
   }
@@ -356,7 +436,10 @@ export async function* runSubscription(req: LLMRequest, signal?: AbortSignal): A
     while ((nl = buf.indexOf('\n')) !== -1) {
       const line = buf.slice(0, nl).trim()
       buf = buf.slice(nl + 1)
-      if (line) queue.push(...parse(line, st))
+      if (!line) continue
+      queue.push(...parse(line, st))
+      const limits = parseLimitLine(id, line)
+      if (limits) void recordLimits(id, limits)
     }
     notify()
   })
@@ -389,6 +472,7 @@ export async function* runSubscription(req: LLMRequest, signal?: AbortSignal): A
   if (st.usage) yield { t: 'usage', usage: st.usage, model: req.model }
   const error = spawnError || st.error || (exitCode !== 0 ? stderr.trim() || `CLI завершился с кодом ${exitCode}` : '')
   if (error) {
+    void recordExhausted(id, error)
     yield { t: 'error', message: explain(id, error), status: 502 }
     return
   }

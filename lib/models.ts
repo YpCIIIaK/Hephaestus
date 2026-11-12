@@ -1,4 +1,4 @@
-import type { ModelAlias, ModelInfo, ProviderId, Usage } from './types'
+import type { Effort, ModelAlias, ModelInfo, ProviderId, Usage } from './types'
 
 export const OLLAMA_PREFIX = 'ollama/'
 export const CUSTOM_PREFIX = 'custom/'
@@ -19,8 +19,32 @@ export const isSubscriptionModel = (modelId: string) => {
   return p === 'claude-code' || p === 'codex'
 }
 
-/** ID модели без префикса провайдера: так его ждёт API */
-export function upstreamModelId(modelId: string): string {
+export const EFFORTS: Effort[] = ['minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra']
+export const EFFORT_LABELS: Record<Effort, { short: string; title: string }> = {
+  minimal: { short: 'min', title: 'Минимальное усилие — почти без рассуждений' },
+  low: { short: 'low', title: 'Низкое усилие — быстро и дёшево' },
+  medium: { short: 'med', title: 'Среднее усилие' },
+  high: { short: 'high', title: 'Высокое усилие — глубже думает' },
+  xhigh: { short: 'xhigh', title: 'Очень высокое усилие' },
+  max: { short: 'max', title: 'Максимальное усилие' },
+  ultra: { short: 'ultra', title: 'Максимум с автоматическим распределением работы' },
+}
+
+/** «claude-code/opus@max» → модель и усилие; без суффикса — усилие по умолчанию */
+export function splitEffort(modelId: string): { base: string; effort?: Effort } {
+  const at = modelId.lastIndexOf('@')
+  if (at > 0) {
+    const effort = modelId.slice(at + 1) as Effort
+    if (EFFORTS.includes(effort)) return { base: modelId.slice(0, at), effort }
+  }
+  return { base: modelId }
+}
+
+export const withEffort = (base: string, effort?: Effort | null) => (effort ? `${base}@${effort}` : base)
+
+/** ID модели без префикса провайдера и усилия: так его ждёт API */
+export function upstreamModelId(rawId: string): string {
+  const modelId = splitEffort(rawId).base
   const p = providerOf(modelId)
   if (p === 'ollama') return modelId.slice(OLLAMA_PREFIX.length)
   if (p === 'custom') return modelId.slice(CUSTOM_PREFIX.length)
