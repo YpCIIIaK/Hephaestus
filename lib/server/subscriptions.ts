@@ -55,11 +55,16 @@ export async function routeModel(model: string): Promise<string> {
 
 const versionCache = new Map<string, { at: number; version: string | null; error?: string }>()
 
+export function resetCliCache() {
+  versionCache.clear()
+}
+
 export async function cliVersion(bin: string): Promise<{ version: string | null; error?: string }> {
   const hit = versionCache.get(bin)
   if (hit && Date.now() - hit.at < 60_000) return hit
   const r = await new Promise<{ version: string | null; error?: string }>((resolve) => {
-    const child = spawn(bin, ['--version'], { shell: process.platform === 'win32', windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] })
+    // PATH как у запусков: CLI, установленный кнопкой, лежит в общей папке инструментов
+    const child = spawn(bin, ['--version'], { env: subscriptionEnv(), shell: process.platform === 'win32', windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] })
     let out = ''
     const timer = setTimeout(() => child.kill('SIGKILL'), 8000)
     child.stdout.setEncoding('utf8').on('data', (d: string) => (out += d))

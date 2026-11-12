@@ -1,7 +1,7 @@
 'use client'
 
-import { BadgeCheck, CheckCircle2, CircleDashed, Cpu, Database, Download, FolderCog, KeyRound, Gauge, MessageSquareText, RefreshCw, Server, Settings2, Sparkles, TriangleAlert, Upload, XCircle } from 'lucide-react'
-import { useRef, useState } from 'react'
+import { BadgeCheck, CheckCircle2, LogIn, LogOut, CircleDashed, Cpu, Database, Download, FolderCog, KeyRound, Gauge, MessageSquareText, RefreshCw, Server, Settings2, Sparkles, TriangleAlert, Upload, XCircle } from 'lucide-react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { ModelPicker } from '@/components/model-picker'
 import { PageHeader } from '@/components/shell/page-header'
@@ -484,6 +484,140 @@ const SUB_INFO: Record<'claude-code' | 'codex', { title: string; install: string
   },
 }
 
+interface AuthJobView {
+  action: 'install' | 'login' | 'logout'
+  state: 'running' | 'done' | 'failed'
+  output: string
+  url?: string
+}
+interface SubAuthView {
+  id: 'claude-code' | 'codex'
+  installed: boolean
+  version: string | null
+  loggedIn: boolean | null
+  detail?: string
+  job: AuthJobView | null
+}
+
+const JOB_LABEL: Record<AuthJobView['action'], string> = { install: 'Установка', login: 'Вход', logout: 'Выход' }
+
+/** Установка CLI и вход в подписку кнопками: сервер запускает штатные команды CLI */
+function SubscriptionAuth({ id, onChanged }: { id: 'claude-code' | 'codex'; onChanged: () => void }) {
+  const [view, setView] = useState<SubAuthView | null>(null)
+  const [code, setCode] = useState('')
+  const running = view?.job?.state === 'running'
+
+  const load = useCallback(async () => {
+    try {
+      const r = await api<{ subscriptions: SubAuthView[] }>('/api/subscriptions')
+      setView(r.subscriptions.find((s) => s.id === id) ?? null)
+    } catch {
+      // сервер недоступен — покажем при следующем опросе
+    }
+  }, [id])
+
+  useEffect(() => {
+    void load()
+  }, [load])
+  // Пока идёт установка или вход — обновляем состояние; по окончании — каталог моделей и статус
+  const wasRunning = useRef(false)
+  useEffect(() => {
+    if (!running) {
+      if (wasRunning.current) onChanged()
+      wasRunning.current = false
+      return
+    }
+    wasRunning.current = true
+    const t = setInterval(() => void load(), 1500)
+    return () => clearInterval(t)
+  }, [running, load, onChanged])
+
+  const act = async (action: string, extra: Record<string, unknown> = {}) => {
+    try {
+      await api('/api/subscriptions', { method: 'POST', json: { action, id, ...extra } })
+      await load()
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e))
+    }
+  }
+
+  if (!view) return null
+  const job = view.job
+  return (
+    <div className="space-y-2 rounded-lg border border-border bg-surface-2/40 p-3 text-[13px]">
+      <div className="flex flex-wrap items-center gap-2">
+        {view.installed ? (
+          view.loggedIn ? (
+            <StatusPill ok label={`вход выполнен${view.detail ? ` · ${view.detail}` : ''}`} />
+          ) : (
+            <StatusPill ok={false} label={view.loggedIn === false ? 'вход не выполнен' : 'вход: неизвестно'} />
+          )
+        ) : (
+          <StatusPill ok={false} label="CLI не установлен" />
+        )}
+        <span className="flex-1" />
+        {!view.installed && (
+          <Button size="sm" variant="primary" disabled={running} onClick={() => void act('install')}>
+            <Download /> Установить
+          </Button>
+        )}
+        {view.installed && !view.loggedIn && (
+          <Button size="sm" variant="primary" disabled={running} onClick={() => void act('login')}>
+            <LogIn /> Войти в подписку
+          </Button>
+        )}
+        {view.installed && view.loggedIn && (
+          <Button size="sm" variant="ghost" disabled={running} onClick={() => void act('logout')}>
+            <LogOut /> Выйти
+          </Button>
+        )}
+        {view.installed && (
+          <Button size="sm" variant="ghost" disabled={running} onClick={() => void act('install')} title="Обновить CLI до последней версии">
+            <RefreshCw /> Обновить
+          </Button>
+        )}
+      </div>
+      {job && (job.state === 'running' || job.state === 'failed' || job.action !== 'logout') && job.output.trim() && (
+        <div className="space-y-2">
+          <div className="flex items-center gap-2 text-xs text-muted">
+            {job.state === 'running' ? <Spinner className="size-3" /> : job.state === 'done' ? <CheckCircle2 className="size-3.5 text-success" /> : <XCircle className="size-3.5 text-danger" />}
+            {JOB_LABEL[job.action]}: {job.state === 'running' ? 'выполняется…' : job.state === 'done' ? 'готово' : 'не удалось'}
+            {job.state === 'running' && (
+              <button className="ml-auto underline hover:text-fg" onClick={() => void act('cancel')}>
+                Отменить
+              </button>
+            )}
+          </div>
+          {job.action === 'login' && job.state === 'running' && (
+            <div className="space-y-2">
+              <p className="text-xs text-muted">Браузер со страницей входа должен открыться сам. Войдите в аккаунт с подпиской — окно можно закрыть, когда появится «успешно».</p>
+              {job.url && (
+                <a href={job.url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-xs font-medium text-accent underline">
+                  Открыть страницу входа вручную
+                </a>
+              )}
+              <div className="flex gap-2">
+                <Input value={code} onChange={(e) => setCode(e.target.value)} placeholder="Если страница показала код — вставьте его сюда" className="font-mono text-xs" />
+                <Button
+                  size="sm"
+                  disabled={!code.trim()}
+                  onClick={() => {
+                    void act('code', { code })
+                    setCode('')
+                  }}
+                >
+                  Отправить
+                </Button>
+              </div>
+            </div>
+          )}
+          <pre className="max-h-40 overflow-auto whitespace-pre-wrap rounded bg-surface-2 p-2 font-mono text-[11px] text-muted">{job.output.trim().split('\n').slice(-12).join('\n')}</pre>
+        </div>
+      )}
+    </div>
+  )
+}
+
 function SubscriptionsSection() {
   const status = useCatalog((s) => s.status)
   const models = useCatalog((s) => s.models)
@@ -494,6 +628,13 @@ function SubscriptionsSection() {
   const [busy, setBusy] = useState(false)
   const subs = status?.subscriptions ?? []
   const routes = status?.subscriptionRoutes ?? {}
+  // После установки или входа — свежий статус CLI и каталог моделей
+  const refreshStatus = useCallback(() => {
+    void api<ServerStatus>('/api/status')
+      .then((st) => useCatalog.setState({ status: st }))
+      .catch(() => {})
+    void refreshCatalog(true)
+  }, [refreshCatalog])
 
   const save = async (body: Record<string, unknown>, ok = 'Сохранено') => {
     setBusy(true)
@@ -533,11 +674,12 @@ function SubscriptionsSection() {
               <div className="text-[13px]">
                 {info.title}
                 <span className="block text-xs">
-                  {s.version ? <StatusPill ok label={`установлен · ${s.version}`} /> : <StatusPill ok={false} label={`${s.bin}: ${s.error ?? 'не найден'} — установите: ${info.install}`} />}
+                  {s.version ? <StatusPill ok label={`установлен · ${s.version}`} /> : <StatusPill ok={false} label={`${s.bin}: ${s.error ?? 'не найден'} — кнопка «Установить» ниже или вручную: ${info.install}`} />}
                 </span>
               </div>
               <Switch checked={s.enabled} disabled={busy} onCheckedChange={(enabled) => void save(subsBody(s.id, { enabled }), enabled ? 'Подписка включена' : 'Подписка выключена')} />
             </div>
+            <SubscriptionAuth id={s.id} onChanged={refreshStatus} />
             {s.enabled && (
               <>
                 <FieldRow label="Модели" hint={info.models}>
