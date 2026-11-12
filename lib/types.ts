@@ -53,6 +53,10 @@ export interface LLMRequest {
   maxToolSteps?: number
   /** Работать в отдельной копии проекта (id из /api/sandboxes) */
   sandbox?: string
+  /** Память сессии (обычно id диалога): подключается к запросу, модель может дописывать в неё */
+  session?: string
+  /** Кто пишет в память сессии — имя участника */
+  sessionAuthor?: string
 }
 
 export interface Usage {

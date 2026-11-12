@@ -4,6 +4,7 @@ import { getSkill, listSkills, skillsCatalogText } from './skills'
 import { webSearch } from './search'
 import { fetchPage, formatSearchResults } from './web'
 import { codebaseSearch, findFiles, formatCodeHits, formatGrepHits, searchCode } from './code-search'
+import { formatClone, gitClone } from './git'
 import { remember } from './memory'
 import { getTerminalSettings } from './settings'
 import { formatCommandResult, listBackground, readBackground, runCommand, startBackground, stopBackground } from './terminal'
@@ -110,6 +111,12 @@ const TOOLSETS: Record<ToolsetId, ToolDefinition[]> = {
     ),
     def('process_output', 'Новый вывод фонового процесса; без id — список фоновых процессов.', { id: str('id процесса, например p1') }),
     def('stop_process', 'Остановить фоновый процесс.', { id: str('id процесса') }, ['id']),
+    def(
+      'git_clone',
+      'Склонировать git-репозиторий (GitHub, GitLab и др.). Утилиты и инструменты (into: tools) кладутся в общую папку @tools/repos — один раз на все проекты; проекты для работы (into: workspace) — в repos/ рабочей папки. Если уже склонирован — подтягивает обновления, а не качает заново.',
+      { url: str('Ссылка на репозиторий, можно и на файл в нём'), into: { type: 'string', enum: ['tools', 'workspace'], description: 'Куда: tools — общая папка инструментов (по умолчанию), workspace — рабочая папка' }, ref: str('Ветка или тег, необязательно') },
+      ['url'],
+    ),
   ],
   knowledge: [
     def('knowledge_search', 'Поиск по базе знаний пользователя (загруженные документы). Возвращает релевантные фрагменты.', { query: str('Запрос'), limit: int('Сколько фрагментов, по умолчанию 5') }, ['query']),
@@ -225,6 +232,11 @@ export async function runTool(name: string, rawArgs: string | Record<string, unk
         return { ok: true, output: clip(s('id') ? readBackground(s('id')) : listBackground()) }
       case 'stop_process':
         return { ok: true, output: stopBackground(s('id')) }
+      case 'git_clone': {
+        if ((await getTerminalSettings()).mode !== 'full') return { ok: false, output: 'Терминал выключен — клонирование недоступно. Включите его в настройках: Рабочая папка и терминал' }
+        const into = s('into') === 'workspace' ? 'workspace' : 'tools'
+        return { ok: true, output: formatClone(await gitClone(s('url'), { into, ref: s('ref') || undefined })) }
+      }
       case 'delete_file': {
         const r = await deleteWorkspacePath(s('path'))
         return { ok: true, output: `Удалён ${r.path}` }

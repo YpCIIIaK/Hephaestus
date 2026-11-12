@@ -195,7 +195,7 @@ async function runTarget(conv: Conversation, turnIndex: number, target: ChatTarg
   const notices: string[] = []
   const upd = throttled<Partial<ChatReply>>((p) => patchReply(conv.id, turn.id, key, p))
   const res = await callLLM(
-    { model, messages, temperature, maxTokens, tools, sandbox },
+    { model, messages, temperature, maxTokens, tools, sandbox, session: conv.id, sessionAuthor: describeTarget(target).name },
     {
       signal,
       meta: { source: 'chat', label: describeTarget(target).name },
@@ -497,6 +497,41 @@ export async function judgeTurn(convId: string, turnId: string) {
   } finally {
     untrack(convId, ac)
   }
+}
+
+/** Краткая выжимка диалога для переноса в другой: резюме сжатий и последние ходы */
+export function sessionDigest(conv: Conversation, lastTurns = 4, perReply = 1500): string {
+  const parts: string[] = []
+  const summaries = Object.entries(conv.memory ?? {}).map(([key, m]) => {
+    const t = parseKey(key)
+    return `Резюме ранней истории (${t ? describeTarget(t).name : key}):\n${m.text}`
+  })
+  if (summaries.length) parts.push(...summaries)
+  for (const turn of conv.turns.slice(-lastTurns)) {
+    const replies = Object.entries(turn.replies)
+      .filter(([, r]) => r.text.trim())
+      .map(([key, r]) => {
+        const t = parseKey(key)
+        const text = r.text.trim()
+        return `${t ? describeTarget(t).name : key}: ${text.length > perReply ? `${text.slice(0, perReply)}…` : text}`
+      })
+    parts.push([`Пользователь: ${turn.user.slice(0, 2000)}`, ...replies, turn.judge?.synthesis ? `Итог судьи: ${turn.judge.synthesis.slice(0, perReply)}` : ''].filter(Boolean).join('\n'))
+  }
+  return parts.length ? `### Из диалога «${conv.title}»\n\n${parts.join('\n\n')}` : ''
+}
+
+/** Переносит память сессии и выжимку диалога в другой диалог (или в новый — его id вернётся) */
+export async function transferSession(fromId: string, toId: string | null, withDigest = true): Promise<{ to: string; chars: number }> {
+  const from = getConv(fromId)
+  if (!from) throw new Error('Диалог не найден')
+  let to = toId
+  if (!to) {
+    const fresh = { ...newConversation(), title: `${from.title} (продолжение)`, targets: from.targets, tools: from.tools, systemPrompt: from.systemPrompt }
+    useChats.getState().create(fresh)
+    to = fresh.id
+  }
+  const r = await api<{ chars: number }>('/api/sessions', { method: 'POST', json: { action: 'copy', from: fromId, to, extra: withDigest ? sessionDigest(from).slice(0, 90_000) : '' } })
+  return { to, chars: r.chars }
 }
 
 export function conversationToMarkdown(conv: Conversation): string {

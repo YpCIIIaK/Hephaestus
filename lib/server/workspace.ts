@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import type { WorkspaceEntry } from '../types'
-import { getWorkspaceDir } from './settings'
+import { getToolsDir, getWorkspaceDir } from './settings'
 
 // Песочница для файловых инструментов ИИ: рабочая папка из настроек.
 // Все пути относительные и не могут выйти за её пределы — ни через «..»,
@@ -44,11 +44,28 @@ function isInside(parent: string, child: string): boolean {
   return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel))
 }
 
-/** Превращает пользовательский путь в абсолютный внутри песочницы */
-export async function resolveWorkspacePath(input: string): Promise<{ abs: string; rel: string; root: string }> {
-  const raw = String(input ?? '').trim()
+/** Пути вида @tools/… ведут в общую папку инструментов, а не в проект */
+export const TOOLS_PREFIX = '@tools'
+
+export async function ensureTools(): Promise<string> {
+  const dir = getToolsDir()
+  await fs.mkdir(/* turbopackIgnore: true */ path.join(dir, 'repos'), { recursive: true })
+  await fs.mkdir(/* turbopackIgnore: true */ path.join(dir, 'bin'), { recursive: true })
+  return dir
+}
+
+/**
+ * Превращает пользовательский путь в абсолютный внутри песочницы. prefix —
+ * «@tools/» для общей папки инструментов: его нужно ставить перед путями,
+ * которые показываются модели, чтобы она могла передать их обратно.
+ */
+export async function resolveWorkspacePath(input: string): Promise<{ abs: string; rel: string; root: string; prefix: string }> {
+  let raw = String(input ?? '').trim()
   if (raw.includes('\0')) throw new WorkspaceError('Недопустимый путь')
-  const root = await ensureWorkspace()
+  const tools = /^@tools(\/|\\|$)/.test(raw)
+  if (tools) raw = raw.slice(TOOLS_PREFIX.length).replace(/^[\\/]+/, '')
+  const prefix = tools ? `${TOOLS_PREFIX}/` : ''
+  const root = tools ? await ensureTools() : await ensureWorkspace()
   // Модели часто передают абсолютный путь из описания рабочей папки — внутри неё он допустим.
   // Иначе ведущий «/» означает корень проекта: «/src/app.ts» — это src/app.ts.
   const asAbsolute = path.resolve(/* turbopackIgnore: true */ raw || '.')
@@ -59,7 +76,7 @@ export async function resolveWorkspacePath(input: string): Promise<{ abs: string
     .replace(/^\.\//, '')
     .replace(/^workspace\//, '')
   const abs = insideAsIs ? asAbsolute : path.resolve(root, cleaned || '.')
-  if (!isInside(root, abs)) throw new WorkspaceError('Путь выходит за пределы рабочей папки', 403)
+  if (!isInside(root, abs)) throw new WorkspaceError(tools ? 'Путь выходит за пределы папки инструментов' : 'Путь выходит за пределы рабочей папки', 403)
 
   // Проверяем реальный путь ближайшего существующего предка: ссылка внутри
   // песочницы не должна вести наружу.
@@ -77,12 +94,13 @@ export async function resolveWorkspacePath(input: string): Promise<{ abs: string
       probe = parent
     }
   }
-  return { abs, rel: path.relative(root, abs).split(path.sep).join('/'), root }
+  const rel = path.relative(root, abs).split(path.sep).join('/')
+  return { abs, rel: tools ? (rel ? prefix + rel : TOOLS_PREFIX) : rel, root, prefix }
 }
 
 /** Дерево рабочей папки или её подпапки; depth ограничивает глубину */
 export async function listTree(sub = '', depth = Infinity): Promise<WorkspaceEntry[]> {
-  const { abs: start, root } = await resolveWorkspacePath(sub)
+  const { abs: start, root, prefix } = await resolveWorkspacePath(sub)
   let count = 0
   async function walk(dir: string, level: number): Promise<WorkspaceEntry[]> {
     const entries = await fs.readdir(/* turbopackIgnore: true */ dir, { withFileTypes: true }).catch(() => {
@@ -94,7 +112,7 @@ export async function listTree(sub = '', depth = Infinity): Promise<WorkspaceEnt
       if (count++ > MAX_TREE_ENTRIES) break
       if (e.name.startsWith('.') && e.name !== '.env.example') continue
       const abs = path.join(dir, e.name)
-      const rel = path.relative(root, abs).split(path.sep).join('/')
+      const rel = prefix + path.relative(root, abs).split(path.sep).join('/')
       if (e.isDirectory()) {
         if (SKIP_DIRS.has(e.name)) continue
         out.push({ path: rel, name: e.name, type: 'dir', children: level < depth ? await walk(abs, level + 1) : undefined })
@@ -145,8 +163,8 @@ export async function readWorkspaceFile(
 }
 
 export async function writeWorkspaceFile(p: string, content: string): Promise<{ path: string; bytes: number; created: boolean }> {
-  const { abs, rel } = await resolveWorkspacePath(p)
-  if (!rel || rel === '.') throw new WorkspaceError('Укажите имя файла')
+  const { abs, rel, root } = await resolveWorkspacePath(p)
+  if (abs === root) throw new WorkspaceError('Укажите имя файла')
   return withFileLock(abs, async () => {
     const existed = await fs
       .stat(/* turbopackIgnore: true */ abs)
@@ -193,8 +211,9 @@ export async function editWorkspaceFile(
 }
 
 export async function deleteWorkspacePath(p: string): Promise<{ path: string }> {
-  const { abs, rel } = await resolveWorkspacePath(p)
-  if (!rel || rel === '.') throw new WorkspaceError('Нельзя удалить корень рабочей папки', 403)
+  const { abs, rel, root } = await resolveWorkspacePath(p)
+  // Корень проекта и общей папки инструментов удалить нельзя — сравниваем по абсолютному пути
+  if (abs === root) throw new WorkspaceError('Нельзя удалить корень рабочей папки или папки инструментов', 403)
   return withFileLock(abs, async () => {
     await fs.rm(/* turbopackIgnore: true */ abs, { recursive: true, force: false }).catch(() => {
       throw new WorkspaceError(`Не найдено: ${rel}`, 404)
@@ -206,7 +225,7 @@ export async function deleteWorkspacePath(p: string): Promise<{ path: string }> 
 export async function moveWorkspacePath(from: string, to: string): Promise<{ from: string; to: string }> {
   const src = await resolveWorkspacePath(from)
   const dst = await resolveWorkspacePath(to)
-  if (!src.rel || src.rel === '.') throw new WorkspaceError('Нельзя переместить корень рабочей папки', 403)
+  if (src.abs === src.root) throw new WorkspaceError('Нельзя переместить корень рабочей папки или папки инструментов', 403)
   const exists = await fs.stat(/* turbopackIgnore: true */ src.abs).catch(() => null)
   if (!exists) throw new WorkspaceError(`Не найдено: ${src.rel}`, 404)
   if (await fs.stat(/* turbopackIgnore: true */ dst.abs).catch(() => null)) throw new WorkspaceError(`Уже существует: ${dst.rel}`, 409)

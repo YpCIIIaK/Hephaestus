@@ -63,6 +63,15 @@ export async function getWorkspaceDir(): Promise<string> {
   return getProjectDir()
 }
 
+/**
+ * Общая папка инструментов (@tools): склонированные утилиты, установленные
+ * CLI и Python-окружение. Одна на все проекты и копии — чтобы модели не
+ * скачивали одно и то же по десять раз.
+ */
+export function getToolsDir(): string {
+  return path.resolve(/* turbopackIgnore: true */ process.env.HEPHAESTUS_TOOLS || path.join(DATA_DIR, 'tools'))
+}
+
 /** Сама папка проекта — без учёта копии, в которой может работать модель */
 export async function getProjectDir(): Promise<string> {
   const s = await loadServerSettings()

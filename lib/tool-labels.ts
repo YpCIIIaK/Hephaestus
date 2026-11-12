@@ -10,6 +10,7 @@ export const TOOL_LABELS: Record<string, string> = {
   delete_file: 'Удаление',
   move_file: 'Перемещение',
   remember: 'Память проекта',
+  session_note: 'Память сессии',
   search_code: 'Поиск в коде',
   find_files: 'Поиск файлов',
   codebase_search: 'Поиск по смыслу',
@@ -17,6 +18,7 @@ export const TOOL_LABELS: Record<string, string> = {
   start_process: 'Фоновый процесс',
   process_output: 'Вывод процесса',
   stop_process: 'Остановка процесса',
+  git_clone: 'Клонирование репозитория',
   knowledge_search: 'База знаний',
   load_skill: 'Навык',
 }

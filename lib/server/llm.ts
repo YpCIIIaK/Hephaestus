@@ -8,6 +8,7 @@ import { mockStream } from './mock-llm'
 import { parseTextToolCalls, partialTagLength, TEXT_TOOL_CALL_TAG } from './text-tool-calls'
 import { projectContext, withSystemBlock } from './memory'
 import { sandboxTree } from './sandboxes'
+import { appendSessionNote, SESSION_TOOL, sessionContext } from './sessions'
 import { runInWorkspace } from './workspace-scope'
 
 // Единый шлюз к моделям. Все провайдеры говорят на OpenAI-совместимом API
@@ -297,6 +298,9 @@ export async function* runLLM(req: LLMRequest, signal?: AbortSignal): AsyncGener
   }
 
   let tools: ToolDefinition[] = await buildTools(req.tools)
+  // Память диалога: записывать можно, когда модель работает с инструментами —
+  // их результаты в следующие ходы не попадают
+  if (req.session && tools.length) tools = [...tools, SESSION_TOOL]
   let jsonMode = !!req.jsonMode
   const codeWork = req.tools?.some((t) => t === 'code' || t === 'terminal' || t === 'files_write')
   const maxSteps = Math.min(req.maxToolSteps ?? (codeWork ? CODE_MAX_STEPS : DEFAULT_MAX_STEPS), MAX_TOOL_STEPS)
@@ -311,7 +315,8 @@ export async function* runLLM(req: LLMRequest, signal?: AbortSignal): AsyncGener
       return
     }
   }
-  const messages = withDate(withSystemBlock(req.messages, await inScope(() => projectContext(req.tools)).catch(() => '')))
+  const session = req.session ? await sessionContext(req.session, tools.length > 0).catch(() => '') : ''
+  const messages = withDate(withSystemBlock(withSystemBlock(req.messages, await inScope(() => projectContext(req.tools)).catch(() => '')), session))
   let total: Usage = { ...ZERO_USAGE, cost: null }
   let finish = 'stop'
   let rateRetries = 0
@@ -442,7 +447,9 @@ export async function* runLLM(req: LLMRequest, signal?: AbortSignal): AsyncGener
       const looping = prev.length >= 2 && prev[prev.length - 1] === prev[prev.length - 2]
       const { ok, output } = looping
         ? { ok: false, output: `Этот вызов уже выполнялся ${prev.length} раз(а) с тем же результатом — он выше в истории. Не повторяй его: используй полученные данные, сделай другое действие или напиши итоговый ответ.` }
-        : await inScope(() => runTool(call.function.name, call.function.arguments, signal))
+        : call.function.name === 'session_note' && req.session
+          ? await saveSessionNote(req.session, call.function.arguments, req.sessionAuthor)
+          : await inScope(() => runTool(call.function.name, call.function.arguments, signal))
       if (!looping) seen.set(sig, [...prev, hash(output)])
       yield { t: 'tool_result', id: call.id, name: call.function.name, ok, preview: output.slice(0, 600) }
       messages.push({ role: 'tool', tool_call_id: call.id, name: call.function.name, content: output })
@@ -451,4 +458,13 @@ export async function* runLLM(req: LLMRequest, signal?: AbortSignal): AsyncGener
 
   yield { t: 'usage', usage: total, model: req.model }
   yield { t: 'done', finish }
+}
+
+async function saveSessionNote(session: string, rawArgs: string, author?: string): Promise<{ ok: boolean; output: string }> {
+  try {
+    const args = rawArgs.trim() ? JSON.parse(rawArgs) : {}
+    return { ok: true, output: await appendSessionNote(session, String(args.note ?? ''), author) }
+  } catch (e) {
+    return { ok: false, output: `Ошибка: ${e instanceof Error ? e.message : String(e)}` }
+  }
 }

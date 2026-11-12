@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import type { LLMMessage, ToolsetId } from '../types'
-import { getTerminalSettings, getWorkspaceDir } from './settings'
+import { getTerminalSettings, getToolsDir, getWorkspaceDir } from './settings'
 import { currentScope } from './workspace-scope'
 import { withFileLock } from './workspace'
 
@@ -44,6 +44,46 @@ export async function projectContext(tools: ToolsetId[] | undefined): Promise<st
     lines.push(`\nПамять проекта — файл ${memory.name} (правила и договорённости, следуй им):\n<project_memory>\n${text.trim()}\n</project_memory>`)
   }
   if (tools.includes('files_write')) lines.push('Узнал важное и неочевидное о проекте (команды сборки, договорённости, решения пользователя) — сохрани это инструментом remember.')
+  lines.push(await capabilities(tools, terminal.mode === 'full'))
+  return lines.join('\n')
+}
+
+const listDir = (dir: string) =>
+  fs
+    .readdir(/* turbopackIgnore: true */ dir, { withFileTypes: true })
+    .then((es) => es.filter((e) => !e.name.startsWith('.')).map((e) => e.name).sort())
+    .catch(() => [] as string[])
+
+/**
+ * Что модель реально может сделать — иначе она отвечает «не могу посмотреть
+ * репозиторий», хотя может склонировать его и запустить нужную утилиту.
+ */
+async function capabilities(tools: ToolsetId[], terminal: boolean): Promise<string> {
+  const dir = getToolsDir()
+  const [repos, bins, venv] = await Promise.all([listDir(path.join(dir, 'repos')), listDir(path.join(dir, 'bin')), listDir(path.join(dir, 'venv'))])
+  const can: string[] = []
+  if (tools.includes('files_read') || tools.includes('code')) can.push('читать и искать по коду проекта и общей папки инструментов: пути вида @tools/… работают в list_files, read_file, search_code, find_files')
+  if (tools.includes('files_write')) can.push('создавать, править, перемещать и удалять файлы')
+  if (tools.includes('terminal') && terminal) {
+    can.push(
+      'клонировать любой публичный репозиторий инструментом git_clone: утилиты — в общую папку @tools/repos (into: tools), проекты для работы и анализа — в repos/ рабочей папки (into: workspace); повторный git_clone не качает заново, а обновляет',
+      'выполнять команды (run_command, фоновые — start_process): ставить зависимости, собирать, запускать тесты и утилиты; cwd может быть подпапкой или @tools/…',
+      'ставить инструменты один раз для всех проектов: `npm i -g <пакет>` идёт в общую папку @tools (её bin уже в PATH); для Python — общее окружение `python3 -m venv "$HEPHAESTUS_TOOLS/venv"` (создай один раз, дальше `pip install` в него — оно тоже в PATH). Кэши npm и pip общие',
+    )
+  }
+  if (tools.includes('web')) can.push('искать в интернете и читать страницы (web_search, fetch_url)')
+  const have = [
+    repos.length ? `репозитории в @tools/repos: ${repos.slice(0, 30).join(', ')}` : '',
+    bins.length ? `команды в @tools/bin: ${bins.slice(0, 30).join(', ')}` : '',
+    venv.length ? 'общее Python-окружение @tools/venv уже создано' : '',
+  ].filter(Boolean)
+  const lines = [`\nТвои возможности:\n${can.map((c) => `- ${c}`).join('\n')}`]
+  if (have.length) lines.push(`Уже установлено в общей папке инструментов (не скачивай заново): ${have.join('; ')}.`)
+  if (tools.includes('terminal') && terminal) {
+    lines.push(
+      'Если просят взять инструмент по ссылке и что-то им проверить (например, «возьми github.com/owner/tool и просканируй репозиторий X, составь отчёт»): склонируй инструмент в @tools, прочитай его README, поставь зависимости и собери один раз, склонируй или найди проверяемый репозиторий, запусти инструмент, прочитай результат и составь отчёт по пунктам. Не отвечай, что не можешь, — у тебя есть всё для этого.',
+    )
+  }
   return lines.join('\n')
 }
 

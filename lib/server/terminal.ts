@@ -1,6 +1,7 @@
 import { spawn, type ChildProcess } from 'node:child_process'
 import fs from 'node:fs'
-import { getTerminalSettings } from './settings'
+import path from 'node:path'
+import { getTerminalSettings, getToolsDir } from './settings'
 import { resolveWorkspacePath, WorkspaceError } from './workspace'
 
 // Терминал для моделей: команды выполняются в рабочей папке с правами
@@ -18,9 +19,16 @@ export class TerminalError extends Error {}
 /** Переменные с секретами не должны попасть в команды, которые придумала модель */
 const SECRET_ENV = /(KEY|TOKEN|SECRET|PASSW(OR)?D|CREDENTIAL|COOKIE|SESSION|AUTH)/i
 
+/**
+ * Настройки git через окружение (GIT_CONFIG_COUNT + GIT_CONFIG_KEY_n/VALUE_n)
+ * убираем целиком: KEY_n отсеялся бы фильтром секретов, а без него git падает
+ * на любой команде («missing config key»). Да и значения там бывают с токенами.
+ */
+const GIT_ENV_CONFIG = /^GIT_CONFIG_(COUNT|KEY_\d+|VALUE_\d+|PARAMETERS)$/
+
 export function commandEnv(base: Record<string, string | undefined> = process.env): Record<string, string | undefined> {
   const env: Record<string, string | undefined> = {}
-  for (const [k, v] of Object.entries(base)) if (!SECRET_ENV.test(k)) env[k] = v
+  for (const [k, v] of Object.entries(base)) if (!SECRET_ENV.test(k) && !GIT_ENV_CONFIG.test(k)) env[k] = v
   // Неинтерактивный режим: без пейджеров, вопросов git и цветных кодов
   return { ...env, CI: '1', GIT_TERMINAL_PROMPT: '0', PAGER: 'cat', GIT_PAGER: 'cat', NO_COLOR: '1', FORCE_COLOR: '0', TERM: 'dumb' }
 }
@@ -99,11 +107,35 @@ async function prepare(command: string, cwd?: string) {
   return { dir, timeoutSec }
 }
 
+/**
+ * Общая папка инструментов в окружении команд: её bin и Python-окружение — в
+ * PATH, глобальные npm-пакеты ставятся туда же. Так установленный один раз
+ * инструмент виден во всех проектах и копиях, а не скачивается заново.
+ */
+export function toolsEnv(tools: string, basePath = process.env.PATH ?? ''): Record<string, string> {
+  const venvBin = path.join(tools, 'venv', process.platform === 'win32' ? 'Scripts' : 'bin')
+  // npm на Windows кладёт команды прямо в prefix, на остальных системах — в prefix/bin
+  const dirs = [path.join(tools, 'bin'), venvBin, ...(process.platform === 'win32' ? [tools] : [])]
+  return {
+    HEPHAESTUS_TOOLS: tools,
+    PATH: [...dirs, basePath].filter(Boolean).join(path.delimiter),
+    NPM_CONFIG_PREFIX: tools,
+  }
+}
+
+export function spawnEnv(): NodeJS.ProcessEnv {
+  const base = commandEnv()
+  // На Windows переменная пути зовётся «Path»: не держим две записи с разным регистром
+  const pathKey = Object.keys(base).find((k) => k.toUpperCase() === 'PATH') ?? 'PATH'
+  const { [pathKey]: basePath, ...rest } = base
+  return { ...rest, ...toolsEnv(getToolsDir(), basePath ?? '') } as NodeJS.ProcessEnv
+}
+
 function start(command: string, cwdAbs: string): ChildProcess {
   return spawn(command, {
     ...shellFor(),
     cwd: cwdAbs,
-    env: commandEnv() as NodeJS.ProcessEnv,
+    env: spawnEnv(),
     stdio: ['ignore', 'pipe', 'pipe'],
     detached: process.platform !== 'win32', // своя группа процессов, чтобы убить всё дерево
     windowsHide: true,

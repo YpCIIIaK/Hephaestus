@@ -23,6 +23,8 @@ const schema = z.object({
   jsonMode: z.boolean().optional(),
   maxToolSteps: z.number().int().min(0).max(50).optional(),
   sandbox: z.string().regex(/^sb_[a-z0-9]+$/).optional(),
+  session: z.string().regex(/^[\w-]{1,80}$/).optional(),
+  sessionAuthor: z.string().max(100).optional(),
 })
 
 export async function POST(req: Request) {

@@ -1,6 +1,6 @@
 'use client'
 
-import { ChevronDown, Columns3, Download, Eraser, FoldVertical, Gavel, GitCompareArrows, Minimize2, MoreHorizontal, PanelLeft, Rows3, ScrollText, Trash2, X } from 'lucide-react'
+import { ChevronDown, Columns3, Download, Eraser, FoldVertical, Gavel, GitCompareArrows, NotebookPen, Minimize2, MoreHorizontal, PanelLeft, Rows3, ScrollText, Trash2, X } from 'lucide-react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
@@ -19,6 +19,7 @@ import { useSettings } from '@/lib/stores/settings'
 import { cn, downloadFile } from '@/lib/utils'
 import { Composer, type ComposerHandle } from './composer'
 import { JudgeDialog } from './judge-dialog'
+import { SessionDialog } from './session-dialog'
 import { MultiTaskComposer } from './multi-task-composer'
 import { ConversationList } from './conversation-list'
 import { EmptyChat } from './empty-chat'
@@ -92,6 +93,7 @@ export function ChatView() {
   const [focus, setFocus] = useState<string | null>(null)
   const [systemOpen, setSystemOpen] = useState(false)
   const [judgeOpen, setJudgeOpen] = useState(false)
+  const [sessionOpen, setSessionOpen] = useState(false)
   const [deleting, setDeleting] = useState(false)
   // Черновик: диалог ещё не создан, но участники и инструменты уже выбраны
   const [draft, setDraft] = useState<Conversation>(() => newConversation())
@@ -159,7 +161,7 @@ export function ChatView() {
   const clear = () => {
     if (!conv) return
     clearContext(conv.id)
-    toast.success('Контекст очищен: модели не видят сообщения выше, память проекта сохраняется')
+    toast.success('Контекст очищен: модели не видят сообщения выше, память проекта и сессии сохраняется')
   }
 
   const ensureConv = () => {
@@ -288,6 +290,9 @@ export function ChatView() {
                   <Gavel /> Судья: {(view.judge ? view.judge.enabled : defaults.autoJudge) ? 'вкл' : 'выкл'} · инструкция и модель
                 </MenuItem>
                 <MenuSeparator />
+                <MenuItem onSelect={() => setSessionOpen(true)}>
+                  <NotebookPen /> Память сессии · просмотр и перенос в другой диалог
+                </MenuItem>
                 <MenuItem disabled={running || !conv.turns.length} onSelect={() => void compact()}>
                   <FoldVertical /> Сжать контекст · /compact
                 </MenuItem>
@@ -379,6 +384,7 @@ export function ChatView() {
         </div>
       </section>
 
+      {conv && <SessionDialog open={sessionOpen} onOpenChange={setSessionOpen} convId={conv.id} />}
       <JudgeDialog open={judgeOpen} onOpenChange={setJudgeOpen} value={view.judge} onSave={(judge) => update({ judge })} />
       <Dialog
         open={systemOpen}

@@ -64,8 +64,8 @@ export function matchGlob(glob: string, rel: string): boolean {
 // ─── Обход файлов ────────────────────────────────────────────────────────
 
 /** Все текстовые файлы рабочей папки (без node_modules, .git, сборок и скрытых папок) */
-export async function walkFiles(sub = ''): Promise<{ root: string; files: string[] }> {
-  const { abs: start, root } = await resolveWorkspacePath(sub)
+export async function walkFiles(sub = ''): Promise<{ root: string; files: string[]; prefix: string }> {
+  const { abs: start, root, prefix } = await resolveWorkspacePath(sub)
   const files: string[] = []
   async function walk(dir: string) {
     if (files.length >= MAX_FILES) return
@@ -85,13 +85,13 @@ export async function walkFiles(sub = ''): Promise<{ root: string; files: string
   const st = await fs.stat(/* turbopackIgnore: true */ start).catch(() => null)
   if (st?.isFile()) files.push(path.relative(root, start).split(path.sep).join('/'))
   else await walk(start)
-  return { root, files: files.sort() }
+  return { root, files: files.sort(), prefix }
 }
 
 export async function findFiles(glob: string, sub = '', limit = 200): Promise<string[]> {
-  const { files } = await walkFiles(sub)
+  const { files, prefix } = await walkFiles(sub)
   const found = glob.trim() ? files.filter((f) => matchGlob(glob.trim(), f)) : files
-  return found.slice(0, limit)
+  return found.slice(0, limit).map((f) => prefix + f)
 }
 
 // ─── Точный поиск ────────────────────────────────────────────────────────
@@ -132,7 +132,7 @@ export function hasRipgrep(): boolean {
 const clipLine = (s: string) => (s.length > 300 ? s.slice(0, 300) + '…' : s)
 
 async function grepWithRipgrep(pattern: string, o: GrepOptions, max: number): Promise<GrepHit[]> {
-  const { abs, root } = await resolveWorkspacePath(o.path ?? '')
+  const { abs, root, prefix } = await resolveWorkspacePath(o.path ?? '')
   const args = ['--line-number', '--no-heading', '--color', 'never', '--max-columns', '400', '--max-count', '50']
   if (o.literal) args.push('--fixed-strings')
   if (o.ignoreCase) args.push('--ignore-case')
@@ -156,7 +156,7 @@ async function grepWithRipgrep(pattern: string, o: GrepOptions, max: number): Pr
         // путь:строка:текст (на Windows путь может начинаться с «C:»)
         const m = line.match(/^(.*?):(\d+):(.*)$/)
         if (!m) continue
-        hits.push({ path: path.relative(root, m[1]).split(path.sep).join('/'), line: Number(m[2]), text: clipLine(m[3]) })
+        hits.push({ path: prefix + path.relative(root, m[1]).split(path.sep).join('/'), line: Number(m[2]), text: clipLine(m[3]) })
         if (hits.length >= max) child.kill()
       }
     })
@@ -180,7 +180,7 @@ async function grepWithNode(pattern: string, o: GrepOptions, max: number): Promi
   } catch (e) {
     throw new Error(`Неверное регулярное выражение: ${e instanceof Error ? e.message : String(e)}`)
   }
-  const { root, files } = await walkFiles(o.path ?? '')
+  const { root, files, prefix } = await walkFiles(o.path ?? '')
   const hits: GrepHit[] = []
   for (const rel of o.glob ? files.filter((f) => matchGlob(o.glob!, f)) : files) {
     if (hits.length >= max || o.signal?.aborted) break
@@ -191,7 +191,7 @@ async function grepWithNode(pattern: string, o: GrepOptions, max: number): Promi
     if (text.includes('\0')) continue
     const lines = text.split('\n')
     for (let i = 0; i < lines.length && hits.length < max; i++) {
-      if (re.test(lines[i])) hits.push({ path: rel, line: i + 1, text: clipLine(lines[i].replace(/\r$/, '')) })
+      if (re.test(lines[i])) hits.push({ path: prefix + rel, line: i + 1, text: clipLine(lines[i].replace(/\r$/, '')) })
     }
   }
   return hits
