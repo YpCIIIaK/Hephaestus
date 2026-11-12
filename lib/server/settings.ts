@@ -19,6 +19,10 @@ export interface ServerSettings {
   terminal?: TerminalMode
   /** Лимит времени на одну команду, секунды */
   commandTimeoutSec?: number
+  /** Подписки через официальные CLI */
+  subscriptions?: Partial<Record<'claude-code' | 'codex', { enabled?: boolean; bin?: string; models?: string }>>
+  /** Модель OpenRouter → модель подписки, через которую её запускать */
+  subscriptionRoutes?: Record<string, string>
 }
 
 export type TerminalMode = 'off' | 'full'

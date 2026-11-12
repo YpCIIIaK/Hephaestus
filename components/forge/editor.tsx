@@ -13,7 +13,7 @@ import {
   type NodeChange,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
-import { AlertTriangle, ArrowLeft, Download, History, Square, StepForward } from 'lucide-react'
+import { AlertTriangle, ArrowLeft, Download, History, MessageSquareText, Square, StepForward } from 'lucide-react'
 import Link from 'next/link'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
@@ -354,6 +354,13 @@ function Header({ pipeline, onChange }: { pipeline: Pipeline; onChange: (p: Pipe
         <span className="hidden font-mono text-xs text-muted lg:inline">
           ≈ {estimate.min == null ? '?' : formatCost(estimate.min)}–{estimate.max == null ? '?' : formatCost(estimate.max)}
         </span>
+      </Tip>
+      <Tip content="Открыть новый диалог, где этот пайплайн — участник: каждое сообщение запускает схему">
+        <Button size="sm" variant="ghost" asChild>
+          <Link href={`/chat?pipeline=${encodeURIComponent(pipeline.id)}`}>
+            <MessageSquareText /> В чате
+          </Link>
+        </Button>
       </Tip>
       <Tip content="Экспорт в JSON">
         <Button size="icon" variant="ghost" onClick={() => downloadFile(`${pipeline.name}.pipeline.json`, JSON.stringify({ ...pipeline, format: 'hephaestus-pipeline@1' }, null, 2))} aria-label="Экспорт">

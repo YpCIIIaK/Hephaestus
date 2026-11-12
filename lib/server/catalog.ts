@@ -1,6 +1,7 @@
 import type { ModelInfo } from '../types'
 import { CUSTOM_PREFIX, OLLAMA_PREFIX } from '../models'
 import { getCustomEndpoint, getOllamaUrl, getOpenRouterKey } from './settings'
+import { subscriptionModels } from './subscriptions'
 
 // Каталог моделей: OpenRouter + локальные модели Ollama + свой OpenAI-совместимый сервер.
 
@@ -98,14 +99,15 @@ export async function getCatalog(refresh = false): Promise<CatalogResult> {
       return []
     }
   }
-  const [remote, local, custom] = await Promise.all([
+  const [remote, local, custom, subs] = await Promise.all([
     settle(fetchOpenRouter(refresh), 'OpenRouter'),
     settle(fetchOllamaModels(), 'Ollama'),
     settle(fetchCustomModels(), 'Свой сервер'),
+    settle(subscriptionModels(), 'Подписки'),
   ])
   // Ollama, который просто не запущен, — нормальная ситуация, не ошибка
   const filtered = errors.filter((e) => !e.startsWith('Ollama'))
-  return { models: [...local, ...custom, ...remote], errors: filtered }
+  return { models: [...subs, ...local, ...custom, ...remote], errors: filtered }
 }
 
 export async function findModel(id: string): Promise<ModelInfo | undefined> {

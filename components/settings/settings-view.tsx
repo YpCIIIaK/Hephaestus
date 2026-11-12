@@ -1,12 +1,12 @@
 'use client'
 
-import { CheckCircle2, CircleDashed, Cpu, Database, Download, FolderCog, KeyRound, Gauge, MessageSquareText, RefreshCw, Server, Settings2, Sparkles, TriangleAlert, Upload, XCircle } from 'lucide-react'
+import { BadgeCheck, CheckCircle2, CircleDashed, Cpu, Database, Download, FolderCog, KeyRound, Gauge, MessageSquareText, RefreshCw, Server, Settings2, Sparkles, TriangleAlert, Upload, XCircle } from 'lucide-react'
 import { useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { ModelPicker } from '@/components/model-picker'
 import { PageHeader } from '@/components/shell/page-header'
 import { Button } from '@/components/ui/button'
-import { FieldRow, Input } from '@/components/ui/field'
+import { FieldRow, Input, NativeSelect } from '@/components/ui/field'
 import { Badge, Card, Segmented, Spinner } from '@/components/ui/misc'
 import { Confirm, Slider, Switch } from '@/components/ui/overlay'
 import { api } from '@/lib/client/llm'
@@ -469,6 +469,141 @@ function WorkspaceSection() {
   )
 }
 
+const SUB_INFO: Record<'claude-code' | 'codex', { title: string; install: string; login: string; models: string }> = {
+  'claude-code': {
+    title: 'Claude Code — подписка Claude Pro/Max',
+    install: 'npm i -g @anthropic-ai/claude-code',
+    login: 'запустите claude в терминале и выполните /login',
+    models: 'Алиасы fable, opus, sonnet, haiku или полные имена моделей',
+  },
+  codex: {
+    title: 'Codex — подписка ChatGPT',
+    install: 'npm i -g @openai/codex',
+    login: 'codex login',
+    models: 'Имена моделей Codex; default — модель по умолчанию из настроек Codex',
+  },
+}
+
+function SubscriptionsSection() {
+  const status = useCatalog((s) => s.status)
+  const models = useCatalog((s) => s.models)
+  const refreshCatalog = useCatalog((s) => s.refresh)
+  const [drafts, setDrafts] = useState<Record<string, { bin?: string; models?: string }>>({})
+  const [routeFrom, setRouteFrom] = useState('')
+  const [routeTo, setRouteTo] = useState('')
+  const [busy, setBusy] = useState(false)
+  const subs = status?.subscriptions ?? []
+  const routes = status?.subscriptionRoutes ?? {}
+
+  const save = async (body: Record<string, unknown>, ok = 'Сохранено') => {
+    setBusy(true)
+    try {
+      const st = await api<ServerStatus>('/api/settings', { method: 'POST', json: body })
+      useCatalog.setState({ status: st })
+      setDrafts({})
+      void refreshCatalog(true)
+      toast.success(ok)
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const subsBody = (id: string, patch: { enabled?: boolean; bin?: string; models?: string }) => {
+    const all: Record<string, unknown> = {}
+    for (const s of subs) all[s.id] = { enabled: s.enabled, bin: s.bin, models: s.models.join(', ') }
+    all[id] = { ...(all[id] as object), ...patch }
+    return { subscriptions: all }
+  }
+
+  const subModels = models.filter((m) => m.provider === 'claude-code' || m.provider === 'codex')
+  return (
+    <Section
+      icon={<BadgeCheck />}
+      title="Подписки вместо оплаты за токены"
+      description="Модели Claude и OpenAI через официальные CLI — Claude Code и Codex — по вашей подписке: расход идёт из её лимитов, а не с баланса OpenRouter. Вход выполняется в самих CLI, Hephaestus не хранит и не видит ваши токены."
+    >
+      {subs.map((s) => {
+        const info = SUB_INFO[s.id]
+        const d = drafts[s.id] ?? {}
+        return (
+          <div key={s.id} className="space-y-3 border-b border-border pb-4 last:border-0 last:pb-0">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="text-[13px]">
+                {info.title}
+                <span className="block text-xs">
+                  {s.version ? <StatusPill ok label={`установлен · ${s.version}`} /> : <StatusPill ok={false} label={`${s.bin}: ${s.error ?? 'не найден'} — установите: ${info.install}`} />}
+                </span>
+              </div>
+              <Switch checked={s.enabled} disabled={busy} onCheckedChange={(enabled) => void save(subsBody(s.id, { enabled }), enabled ? 'Подписка включена' : 'Подписка выключена')} />
+            </div>
+            {s.enabled && (
+              <>
+                <FieldRow label="Модели" hint={info.models}>
+                  <div className="flex gap-2">
+                    <Input value={d.models ?? s.models.join(', ')} onChange={(e) => setDrafts({ ...drafts, [s.id]: { ...d, models: e.target.value } })} className="font-mono" />
+                    <Button disabled={busy || d.models == null} onClick={() => void save(subsBody(s.id, { models: d.models }))}>
+                      Сохранить
+                    </Button>
+                  </div>
+                </FieldRow>
+                <FieldRow label="Команда CLI" hint={`Имя команды или полный путь к ней. Перед работой войдите в подписку: ${info.login}`}>
+                  <div className="flex gap-2">
+                    <Input value={d.bin ?? s.bin} onChange={(e) => setDrafts({ ...drafts, [s.id]: { ...d, bin: e.target.value } })} className="font-mono" />
+                    <Button disabled={busy || d.bin == null} onClick={() => void save(subsBody(s.id, { bin: d.bin }))}>
+                      Сохранить
+                    </Button>
+                  </div>
+                </FieldRow>
+              </>
+            )}
+          </div>
+        )
+      })}
+      {subModels.length > 0 && (
+        <FieldRow label="Через подписку вместо OpenRouter" hint="Выбранная модель OpenRouter везде — в чате, агентах, Кузнице — будет работать через подписку. Например, anthropic/claude-fable-5.2 → claude-code/fable">
+          <div className="space-y-2">
+            {Object.entries(routes).map(([from, to]) => (
+              <div key={from} className="flex items-center gap-2 text-[13px]">
+                <span className="truncate font-mono">{from}</span>→<span className="truncate font-mono text-accent">{to}</span>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  disabled={busy}
+                  onClick={() => {
+                    const { [from]: _, ...rest } = routes
+                    void save({ subscriptionRoutes: rest }, 'Перенаправление удалено')
+                  }}
+                >
+                  Убрать
+                </Button>
+              </div>
+            ))}
+            <div className="flex flex-wrap gap-2">
+              <ModelPicker value={routeFrom} onChange={setRouteFrom} placeholder="Модель OpenRouter" />
+              <NativeSelect value={routeTo} onChange={(e) => setRouteTo(e.target.value)}>
+                <option value="">Модель подписки…</option>
+                {subModels.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.id}
+                  </option>
+                ))}
+              </NativeSelect>
+              <Button disabled={busy || !routeFrom || !routeTo || routeFrom.startsWith('claude-code/') || routeFrom.startsWith('codex/')} onClick={() => void save({ subscriptionRoutes: { ...routes, [routeFrom]: routeTo } }, 'Перенаправление сохранено')}>
+                Добавить
+              </Button>
+            </div>
+          </div>
+        </FieldRow>
+      )}
+      <p className="text-xs text-faint">
+        Инструменты у таких моделей свои (чтение и правка файлов, команды, веб) и работают в рабочей папке проекта или в копии участника; терминал — только если он включён выше. База знаний и навыки Hephaestus им недоступны. Использование подписки через CLI подчиняется условиям Anthropic и OpenAI.
+      </p>
+    </Section>
+  )
+}
+
 export function SettingsView() {
   return (
     <>
@@ -477,6 +612,7 @@ export function SettingsView() {
         <div className="mx-auto max-w-3xl space-y-4 px-4 py-6 md:px-6">
           <Connections />
           <WorkspaceSection />
+          <SubscriptionsSection />
           <Models />
           <Limits />
           <ChatPrefs />

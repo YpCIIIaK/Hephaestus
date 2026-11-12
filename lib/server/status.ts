@@ -2,6 +2,7 @@ import type { ServerStatus } from '../types'
 import { fetchOllamaModels } from './catalog'
 import { hasRipgrep } from './code-search'
 import { searchStatus } from './search'
+import { cliVersion, subscriptionConfig } from './subscriptions'
 import { getCustomEndpoint, getOllamaUrl, getOpenRouterKey, getTerminalSettings, getWorkspaceDir, loadServerSettings, maskKey } from './settings'
 
 export async function getServerStatus(): Promise<ServerStatus> {
@@ -31,5 +32,12 @@ export async function getServerStatus(): Promise<ServerStatus> {
     workspaceCustom: !!saved.workspaceDir,
     terminal: { ...terminal, shell: process.platform === 'win32' ? 'cmd.exe' : 'bash' },
     ripgrep: hasRipgrep(),
+    subscriptions: await Promise.all(
+      (['claude-code', 'codex'] as const).map(async (id) => {
+        const cfg = await subscriptionConfig(id)
+        return { id, ...cfg, ...(await cliVersion(cfg.bin)) }
+      }),
+    ),
+    subscriptionRoutes: saved.subscriptionRoutes ?? {},
   }
 }

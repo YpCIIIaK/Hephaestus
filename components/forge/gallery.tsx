@@ -1,6 +1,6 @@
 'use client'
 
-import { CheckCircle2, Copy, Download, MoreHorizontal, Plus, Trash2, Upload, Workflow, AlertTriangle, CircleSlash } from 'lucide-react'
+import { CheckCircle2, Copy, Download, ListOrdered, MoreHorizontal, Plus, Trash2, Upload, Workflow, AlertTriangle, CircleSlash } from 'lucide-react'
 import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { useEffect, useRef, useState } from 'react'
@@ -14,6 +14,7 @@ import { blankPipeline, PIPELINE_TEMPLATES } from '@/lib/engine/templates'
 import { usePipelines } from '@/lib/stores/pipelines'
 import { downloadFile, formatCost, formatMs, formatRelative, plural, uid } from '@/lib/utils'
 import { GraphPreview } from './graph-preview'
+import { RoutineImportDialog } from './routine-import-dialog'
 
 function cloneAsNew(p: Pipeline, name?: string): Pipeline {
   const now = new Date().toISOString()
@@ -29,6 +30,7 @@ export function ForgeGallery() {
   const params = useSearchParams()
   const fileRef = useRef<HTMLInputElement>(null)
   const [deleting, setDeleting] = useState<Pipeline | null>(null)
+  const [routineOpen, setRoutineOpen] = useState(false)
 
   const create = (p: Pipeline) => {
     upsert(p)
@@ -64,9 +66,21 @@ export function ForgeGallery() {
         actions={
           <>
             <input ref={fileRef} type="file" accept=".json,application/json" hidden onChange={(e) => e.target.files?.[0] && importFile(e.target.files[0])} />
-            <Button variant="ghost" onClick={() => fileRef.current?.click()}>
-              <Upload /> Импорт
-            </Button>
+            <Menu>
+              <MenuTrigger asChild>
+                <Button variant="ghost">
+                  <Upload /> Импорт
+                </Button>
+              </MenuTrigger>
+              <MenuContent>
+                <MenuItem onSelect={() => setRoutineOpen(true)}>
+                  <ListOrdered /> Порядок действий из Markdown · шаги → блоки
+                </MenuItem>
+                <MenuItem onSelect={() => fileRef.current?.click()}>
+                  <Upload /> Пайплайн из JSON-файла
+                </MenuItem>
+              </MenuContent>
+            </Menu>
             <Button variant="primary" onClick={() => create(blankPipeline(uid('pl')))}>
               <Plus /> Новый пайплайн
             </Button>
@@ -164,6 +178,14 @@ export function ForgeGallery() {
         </div>
       </div>
       <Confirm open={!!deleting} onOpenChange={(v) => !v && setDeleting(null)} title={`Удалить «${deleting?.name}»?`} description="Пайплайн и история его запусков будут удалены." onConfirm={() => deleting && remove(deleting.id)} />
+      <RoutineImportDialog
+        open={routineOpen}
+        onOpenChange={setRoutineOpen}
+        onCreate={(p) => {
+          create(p)
+          toast.success('Пайплайн создан из порядка действий', { description: 'Проверьте шаги в редакторе. Запустить его можно здесь или в чате — как участника' })
+        }}
+      />
     </>
   )
 }

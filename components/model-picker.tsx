@@ -28,6 +28,7 @@ type Filter = 'all' | 'fav' | 'local' | 'free'
 
 function priceLine(m: ModelInfo) {
   if (m.provider === 'ollama') return 'локально · бесплатно'
+  if (m.provider === 'claude-code' || m.provider === 'codex') return 'по подписке · лимиты подписки'
   if (!m.pricing) return 'цена неизвестна'
   if (m.pricing.prompt === 0 && m.pricing.completion === 0) return 'бесплатно'
   return `${formatPricePerM(m.pricing.prompt)} / ${formatPricePerM(m.pricing.completion)} за 1M`
@@ -114,7 +115,7 @@ export function ModelList({ value, onPick, allowAliases = true, multi }: { value
           options={[
             { value: 'all', label: `Все · ${models.length}` },
             { value: 'fav', label: `Избранные · ${favorites.length}` },
-            { value: 'local', label: 'Локальные' },
+            { value: 'local', label: 'Локальные и подписки' },
             { value: 'free', label: 'Бесплатные' },
           ]}
         />

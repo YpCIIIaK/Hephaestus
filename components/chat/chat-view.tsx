@@ -111,6 +111,12 @@ export function ChatView() {
       setDraft(newConversation())
       router.replace('/chat')
     }
+    // Из Кузницы: «В чате» — новый диалог с пайплайном-участником
+    const pipelineId = params.get('pipeline')
+    if (pipelineId) {
+      setDraft({ ...newConversation(), targets: [{ kind: 'pipeline', id: pipelineId }] })
+      router.replace('/chat')
+    }
   }, [params, router])
 
   useEffect(() => {

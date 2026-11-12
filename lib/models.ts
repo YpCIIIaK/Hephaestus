@@ -2,11 +2,21 @@ import type { ModelAlias, ModelInfo, ProviderId, Usage } from './types'
 
 export const OLLAMA_PREFIX = 'ollama/'
 export const CUSTOM_PREFIX = 'custom/'
+/** Модели по подписке через официальные CLI */
+export const CLAUDE_CODE_PREFIX = 'claude-code/'
+export const CODEX_PREFIX = 'codex/'
 
 export function providerOf(modelId: string): ProviderId {
   if (modelId.startsWith(OLLAMA_PREFIX)) return 'ollama'
   if (modelId.startsWith(CUSTOM_PREFIX)) return 'custom'
+  if (modelId.startsWith(CLAUDE_CODE_PREFIX)) return 'claude-code'
+  if (modelId.startsWith(CODEX_PREFIX)) return 'codex'
   return 'openrouter'
+}
+
+export const isSubscriptionModel = (modelId: string) => {
+  const p = providerOf(modelId)
+  return p === 'claude-code' || p === 'codex'
 }
 
 /** ID модели без префикса провайдера: так его ждёт API */
@@ -14,6 +24,8 @@ export function upstreamModelId(modelId: string): string {
   const p = providerOf(modelId)
   if (p === 'ollama') return modelId.slice(OLLAMA_PREFIX.length)
   if (p === 'custom') return modelId.slice(CUSTOM_PREFIX.length)
+  if (p === 'claude-code') return modelId.slice(CLAUDE_CODE_PREFIX.length)
+  if (p === 'codex') return modelId.slice(CODEX_PREFIX.length)
   return modelId
 }
 
@@ -38,6 +50,8 @@ export const VENDOR_LABELS: Record<string, string> = {
   microsoft: 'Microsoft',
   nvidia: 'NVIDIA',
   perplexity: 'Perplexity',
+  'claude-code': 'Подписка Claude',
+  codex: 'Подписка ChatGPT',
   openrouter: 'OpenRouter',
   ollama: 'Ollama',
   custom: 'Свой сервер',

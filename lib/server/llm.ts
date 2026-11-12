@@ -1,5 +1,5 @@
 import type { LLMEvent, LLMMessage, LLMRequest, ToolCall, Usage } from '../types'
-import { addUsage, computeCost, providerOf, upstreamModelId, ZERO_USAGE } from '../models'
+import { addUsage, computeCost, isSubscriptionModel, providerOf, upstreamModelId, ZERO_USAGE } from '../models'
 import { SSEParser } from '../sse'
 import { findModel } from './catalog'
 import { getCustomEndpoint, getOllamaUrl, getOpenRouterKey } from './settings'
@@ -9,6 +9,7 @@ import { parseTextToolCalls, partialTagLength, TEXT_TOOL_CALL_TAG } from './text
 import { projectContext, withSystemBlock } from './memory'
 import { sandboxTree } from './sandboxes'
 import { appendSessionNote, SESSION_TOOL, sessionContext } from './sessions'
+import { routeModel, runSubscription } from './subscriptions'
 import { runInWorkspace } from './workspace-scope'
 
 // Единый шлюз к моделям. Все провайдеры говорят на OpenAI-совместимом API
@@ -79,7 +80,7 @@ async function endpointFor(modelId: string): Promise<Endpoint> {
   const { key } = await getOpenRouterKey()
   if (!key) throw new GatewayError('Не задан ключ OpenRouter. Добавьте его в настройках или в .env (OPENROUTER_API_KEY)', 401)
   return {
-    provider,
+    provider: 'openrouter',
     url: 'https://openrouter.ai/api/v1/chat/completions',
     headers: {
       Authorization: `Bearer ${key}`,
@@ -288,6 +289,26 @@ export async function* runLLM(req: LLMRequest, signal?: AbortSignal): AsyncGener
     yield* mockStream(req, signal)
     return
   }
+  // Модель по подписке (или модель OpenRouter, перенаправленная на подписку) — через CLI
+  const routed = await routeModel(req.model).catch(() => req.model)
+  if (routed !== req.model) yield { t: 'notice', v: `Запрос идёт через подписку: ${routed}` }
+  if (isSubscriptionModel(routed)) {
+    const run = (r: LLMRequest) => runSubscription(r, signal)
+    if (!req.sandbox) {
+      yield* run({ ...req, model: routed })
+      return
+    }
+    // Своя копия проекта у участника: CLI работает в ней
+    let root: string
+    try {
+      root = await sandboxTree(req.sandbox)
+    } catch (e) {
+      yield { t: 'error', message: e instanceof Error ? e.message : String(e), status: 404 }
+      return
+    }
+    yield* scopedGenerator({ root, sandbox: true }, run({ ...req, model: routed }))
+    return
+  }
 
   let ep: Endpoint
   try {
@@ -466,5 +487,14 @@ async function saveSessionNote(session: string, rawArgs: string, author?: string
     return { ok: true, output: await appendSessionNote(session, String(args.note ?? ''), author) }
   } catch (e) {
     return { ok: false, output: `Ошибка: ${e instanceof Error ? e.message : String(e)}` }
+  }
+}
+
+/** Генератор, каждый шаг которого выполняется в области рабочей папки (копии участника) */
+async function* scopedGenerator<T>(scope: { root: string; sandbox: boolean }, gen: AsyncGenerator<T>): AsyncGenerator<T> {
+  while (true) {
+    const r = await runInWorkspace(scope, () => gen.next())
+    if (r.done) return
+    yield r.value
   }
 }

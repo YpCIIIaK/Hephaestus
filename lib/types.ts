@@ -2,7 +2,7 @@
 
 // ─── Модели ──────────────────────────────────────────────────────────────
 
-export type ProviderId = 'openrouter' | 'ollama' | 'custom'
+export type ProviderId = 'openrouter' | 'ollama' | 'custom' | 'claude-code' | 'codex'
 
 export interface ModelInfo {
   id: string
@@ -140,6 +140,10 @@ export interface ServerStatus {
   ripgrep: boolean
   /** Свой метапоиск: поисковики и их состояние */
   search: { id: string; name: string; pausedUntil?: number; lastError?: string; ok: number; failed: number }[]
+  /** Подписки через официальные CLI: Claude Code и Codex */
+  subscriptions: { id: 'claude-code' | 'codex'; enabled: boolean; bin: string; models: string[]; version: string | null; error?: string }[]
+  /** Перенаправления: модель OpenRouter → модель подписки */
+  subscriptionRoutes: Record<string, string>
 }
 
 // ─── Навыки ──────────────────────────────────────────────────────────────
