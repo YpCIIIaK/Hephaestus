@@ -195,9 +195,9 @@ function ConfigFields({ node, pipeline, set }: { node: PipelineNode; pipeline: P
           <div className="grid grid-cols-3 gap-3">
             <FieldRow label="Деление">
               <NativeSelect value={c.splitBy ?? 'blocks'} onChange={(e) => set({ splitBy: e.target.value as NodeConfig['splitBy'] })}>
-                <option value="blocks">Разделы и абзацы</option>
+                <option value="blocks">Разделы</option>
                 <option value="lines">Строки</option>
-                <option value="json">Массив JSON</option>
+                <option value="json">JSON</option>
               </NativeSelect>
             </FieldRow>
             <FieldRow label="Не больше">
