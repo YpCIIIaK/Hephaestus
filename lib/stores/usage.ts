@@ -19,6 +19,8 @@ export interface UsageEvent {
   latencyMs: number
   ok: boolean
   error?: string
+  /** Модель отказалась выполнять запрос (ответила отказом или пустотой) */
+  refused?: boolean
 }
 
 const MAX_EVENTS = 20_000

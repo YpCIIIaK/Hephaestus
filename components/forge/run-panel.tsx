@@ -1,7 +1,7 @@
 'use client'
 
-import { AlertTriangle, CheckCircle2, CircleSlash, Clock, Footprints, History, Play } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { AlertTriangle, CheckCircle2, CircleSlash, Clock, Footprints, History, Play, RotateCcw } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { CopyButton, Markdown } from '@/components/markdown'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/field'
@@ -9,7 +9,8 @@ import { Badge, Spinner } from '@/components/ui/misc'
 import { Popover, PopoverContent, PopoverTrigger, Switch } from '@/components/ui/overlay'
 import { UsageLine } from '@/components/usage-line'
 import { usePipelineRunner } from '@/lib/client/pipeline-runner'
-import type { Pipeline, PipelineRun } from '@/lib/engine/pipeline'
+import { failedNodes, type Pipeline, type PipelineRun } from '@/lib/engine/pipeline'
+import { api } from '@/lib/client/llm'
 import { usePipelines } from '@/lib/stores/pipelines'
 import { cn, formatMs, formatRelative } from '@/lib/utils'
 import { NODE_STYLE } from './node-meta'
@@ -30,7 +31,7 @@ function RunStatus({ run }: { run: PipelineRun }) {
 function Timeline({ pipeline, run }: { pipeline: Pipeline; run: PipelineRun }) {
   const rows = pipeline.nodes
     .map((n) => ({ n, r: run.nodes[n.id] }))
-    .filter(({ r }) => r?.startedAt && r.endedAt && r.status !== 'skipped')
+    .filter(({ r }) => r?.startedAt && r.endedAt && r.status !== 'skipped' && !r.reused)
     .sort((a, b) => a.r.startedAt! - b.r.startedAt!)
   const total = Math.max(1, (run.endedAt ?? Date.now()) - run.startedAt)
   if (rows.length < 2) return null
@@ -57,7 +58,32 @@ function Timeline({ pipeline, run }: { pipeline: Pipeline; run: PipelineRun }) {
   )
 }
 
-export function RunPanel({ pipeline, run, onRun, onSelectRun, onSelectNode, onChange }: { pipeline: Pipeline; run?: PipelineRun; onRun: (input: string, step: boolean) => void; onSelectRun: (id: string) => void; onSelectNode: (id: string) => void; onChange: (pipeline: Pipeline) => void }) {
+/** Общая память запуска: заметки, которые блоки записали друг для друга */
+function RunMemory({ id, live }: { id: string; live: boolean }) {
+  const [text, setText] = useState<string | null>(null)
+  const load = useCallback(() => {
+    api<{ text: string }>(`/api/sessions?id=${encodeURIComponent(id)}`)
+      .then((r) => setText(r.text))
+      .catch(() => setText(null))
+  }, [id])
+  useEffect(() => {
+    load()
+    if (!live) return
+    const t = setInterval(load, 5000)
+    return () => clearInterval(t)
+  }, [load, live])
+  if (!text?.trim()) return null
+  return (
+    <details className="rounded-xl border border-border bg-surface p-3">
+      <summary className="cursor-pointer text-xs font-semibold">Память запуска · {text.split('\n### ').length} записей</summary>
+      <div className="mt-2 max-h-80 overflow-y-auto">
+        <Markdown text={text} className="text-[12.5px]" />
+      </div>
+    </details>
+  )
+}
+
+export function RunPanel({ pipeline, run, onRun, onRerun, onSelectRun, onSelectNode, onChange }: { pipeline: Pipeline; run?: PipelineRun; onRun: (input: string, step: boolean) => void; onRerun: (previous: PipelineRun, nodeIds: string[]) => void; onSelectRun: (id: string) => void; onSelectNode: (id: string) => void; onChange: (pipeline: Pipeline) => void }) {
   const [input, setInput] = useState(() => inputs.get(pipeline.id) ?? run?.input ?? '')
   const [step, setStep] = useState(false)
   const active = usePipelineRunner((s) => s.active[pipeline.id])
@@ -121,6 +147,10 @@ export function RunPanel({ pipeline, run, onRun, onSelectRun, onSelectNode, onCh
           </Button>
         </div>
         <label className="flex items-start gap-2 rounded-lg bg-surface-2/50 p-2.5 text-xs">
+          <Switch checked={pipeline.sharedMemory !== false} disabled={!!active} onCheckedChange={(value) => onChange({ ...pipeline, sharedMemory: value, updatedAt: new Date().toISOString() })} />
+          <span>Общая память запуска {pipeline.sharedMemory !== false ? 'включена' : 'выключена'}<span className="block text-muted">Блоки с инструментами записывают находки, и все остальные блоки видят эти записи. Перезапуск продолжает ту же память.</span></span>
+        </label>
+        <label className="flex items-start gap-2 rounded-lg bg-surface-2/50 p-2.5 text-xs">
           <Switch checked={!!pipeline.interactions} disabled={!!active} onCheckedChange={(value) => onChange({ ...pipeline, interactions: value, updatedAt: new Date().toISOString() })} />
           <span>Взаимодействия агентов {pipeline.interactions ? 'включены' : 'выключены'}<span className="block text-muted">Агенты по очереди видят ответы друг друга и могут на них ссылаться. Запуск дольше и расходует больше токенов.</span></span>
         </label>
@@ -144,6 +174,12 @@ export function RunPanel({ pipeline, run, onRun, onSelectRun, onSelectNode, onCh
               )}
             </div>
             {finished && <UsageLine usage={run.usage} />}
+            {finished && !active && failedNodes(run).length > 0 && (
+              <Button variant="primary" size="sm" onClick={() => onRerun(run, failedNodes(run))} title="Упавшие блоки и всё, что после них, выполнятся заново; готовые результаты и успешные элементы «Для каждого» возьмутся из этого запуска">
+                <RotateCcw /> Повторить упавшие · {failedNodes(run).length}
+              </Button>
+            )}
+            {run.memoryId && <RunMemory id={run.memoryId} live={run.status === 'running'} />}
             {!!run.interactions?.length && <div className="space-y-2"><div className="text-[11px] font-semibold uppercase tracking-wider text-faint">Разговор агентов</div>{run.interactions.map((entry, i) => <details key={i} className="rounded-xl border border-border bg-surface p-3" open={i === run.interactions!.length - 1}><summary className="cursor-pointer text-xs font-semibold">{entry.label} · {new Date(entry.at).toLocaleTimeString()}</summary><div className="mt-2"><Markdown text={entry.text} className="text-[13px]" /></div></details>)}</div>}
             {run.error && <div className="rounded-lg border border-warning/30 bg-warning/8 p-2.5 text-[13px]">{run.error}</div>}
             {run.output && (
@@ -170,7 +206,8 @@ export function RunPanel({ pipeline, run, onRun, onSelectRun, onSelectNode, onCh
                       <Icon className="size-3.5" style={{ color: s.color }} />
                       <span className="min-w-0 flex-1 truncate text-[13px]">{n.label}</span>
                       {nr?.status === 'running' && <Spinner className="size-3 text-accent" />}
-                      {nr?.status === 'done' && <span className="font-mono text-[10.5px] text-faint">{nr.startedAt && nr.endedAt ? formatMs(nr.endedAt - nr.startedAt) : ''}</span>}
+                      {nr?.status === 'done' && <span className="font-mono text-[10.5px] text-faint">{nr.reused ? 'из прошлого' : nr.startedAt && nr.endedAt ? formatMs(nr.endedAt - nr.startedAt) : ''}</span>}
+                      {!!nr?.refusals?.length && <span className="text-[10.5px] text-warning" title={`Отказались: ${nr.refusals.join(', ')}`}>отказ</span>}
                       {nr?.status === 'error' && <AlertTriangle className="size-3.5 text-danger" />}
                       {nr?.status === 'skipped' && <CircleSlash className="size-3.5 text-faint" />}
                     </button>

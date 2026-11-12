@@ -1,6 +1,7 @@
 'use client'
 
 import type { LLMCall, LLMCallOptions } from '../engine/llm'
+import { detectRefusal } from '../engine/refusal'
 import { ALIAS_LABELS, isAlias, isFreeModel, isSubscriptionModel, newestFreeModels, openrouterTwin, providerOf, subscriptionTwin } from '../models'
 import { NDJSONParser } from '../sse'
 import { modelById, resolveModelId, usableModels, useCatalog } from '../stores/catalog'
@@ -120,6 +121,7 @@ const callLLMOnce: LLMCall = async (req: LLMRequest, opts: LLMCallOptions = {}):
       latencyMs,
       ok: !error,
       error,
+      refused: !error && !aborted ? detectRefusal(text, tools.length) === 'refusal' || undefined : undefined,
     })
   }
   // Сверка с OpenRouter в фоне, не чаще раза в минуту — для лимитов и аналитики

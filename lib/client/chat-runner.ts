@@ -3,6 +3,7 @@
 import { create } from 'zustand'
 import { buildChatMessages, buildCompactionMessages, buildJudgeMessages, buildTitleMessages, compactionPlan, fallbackTitle, parseJudge, parseTitle, targetKey, userContent, type ChatReply, type ChatTarget, type ChatTurn, type Conversation, type ReplySandbox } from '../engine/chat'
 import { runPipeline } from '../engine/pipeline'
+import { detectRefusal, REFUSAL_CLARIFICATION } from '../engine/refusal'
 import { shortModelName } from '../models'
 import { getAgent } from '../stores/agents'
 import { modelById, resolveModelId } from '../stores/catalog'
@@ -194,8 +195,8 @@ async function runTarget(conv: Conversation, turnIndex: number, target: ChatTarg
   const traces: ToolTrace[] = []
   const notices: string[] = []
   const upd = throttled<Partial<ChatReply>>((p) => patchReply(conv.id, turn.id, key, p))
-  const res = await callLLM(
-    { model, messages, temperature, maxTokens, tools, sandbox, session: conv.id, sessionAuthor: describeTarget(target).name },
+  const ask = (msgs: typeof messages) => callLLM(
+    { model, messages: msgs, temperature, maxTokens, tools, sandbox, session: conv.id, sessionAuthor: describeTarget(target).name },
     {
       signal,
       meta: { source: 'chat', label: describeTarget(target).name },
@@ -220,6 +221,20 @@ async function runTarget(conv: Conversation, turnIndex: number, target: ChatTarg
       },
     },
   )
+  let res = await ask(messages)
+  // Модель отказалась — один повтор с уточнением задачи; не помогло — подсказка сменить модель
+  if (!res.error && !res.aborted && detectRefusal(res.text, res.tools.length) === 'refusal') {
+    notices.push('Модель отказалась — повторяю с уточнением задачи')
+    upd.push({ notices: [...notices] })
+    const first = res.text
+    text = ''
+    upd.push({ text: '' })
+    res = await ask([...messages, { role: 'assistant', content: first }, { role: 'user', content: REFUSAL_CLARIFICATION }])
+    if (!res.error && detectRefusal(res.text, res.tools.length) === 'refusal') {
+      notices.push('Модель снова отказалась. Попробуйте другую модель — кнопкой с названием модели над ответом')
+      upd.push({ notices: [...notices] })
+    }
+  }
   upd.flush()
   patchReply(conv.id, turn.id, key, {
     status: res.aborted ? 'stopped' : res.error ? 'error' : 'done',

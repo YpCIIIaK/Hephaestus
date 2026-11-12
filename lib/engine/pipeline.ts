@@ -4,6 +4,7 @@ import { addUsage, ZERO_USAGE } from '../models'
 import { renderTemplate } from '../template'
 import type { LLMEvent, LLMResult, ToolsetId, ToolTrace, Usage } from '../types'
 import { isAbort, throwIfAborted, type DecideCall, type LLMCall } from './llm'
+import { detectRefusal, REFUSAL_CLARIFICATION } from './refusal'
 
 /** С какой вероятностью «да» модель решений принимает ответ без LLM; ниже — решает LLM и пишет замечания */
 const DECIDER_PASS = 0.7
@@ -84,6 +85,8 @@ export interface Pipeline {
   description: string
   emoji: string
   interactions?: boolean
+  /** Общая память запуска: блоки записывают находки (session_note) и видят записи друг друга. По умолчанию включена */
+  sharedMemory?: boolean
   nodes: PipelineNode[]
   edges: PipelineEdge[]
   createdAt: string
@@ -115,6 +118,12 @@ export interface NodeRun {
   sandbox?: string
   /** «Для каждого»: сколько элементов обработано */
   items?: { done: number; total: number; failed: number }
+  /** «Для каждого»: результат по каждому элементу — при перезапуске успешные не пересчитываются */
+  itemResults?: { item: string; text: string; ok: boolean }[]
+  /** Модели, которые отказались выполнять задачу блока */
+  refusals?: string[]
+  /** Результат взят из прошлого запуска (перезапуск с блока или «повторить упавшие») */
+  reused?: boolean
 }
 
 export interface PipelineRun {
@@ -129,6 +138,8 @@ export interface PipelineRun {
   output?: string
   error?: string
   usage: Usage
+  /** id общей памяти запуска (/api/sessions); перезапуск продолжает ту же память */
+  memoryId?: string
   interactions?: { nodeId: string; label: string; text: string; at: number }[]
 }
 
@@ -269,24 +280,58 @@ export function effectiveAgentConfig(node: PipelineNode, getAgent: PipelineDeps[
   }
 }
 
+/** Блоки, которые нужно выполнить заново: выбранные и всё, что от них зависит */
+export function rerunSet(pipeline: Pick<Pipeline, 'edges'>, seeds: string[]): Set<string> {
+  const out = new Set(seeds)
+  const stack = [...seeds]
+  while (stack.length) {
+    const id = stack.pop()!
+    for (const e of pipeline.edges) if (e.source === id && !out.has(e.target)) out.add(e.target), stack.push(e.target)
+  }
+  return out
+}
+
+/** Результаты прошлого запуска, которые берутся как есть: всё, что не зависит от перезапускаемых блоков */
+export function reusedNodes(pipeline: Pick<Pipeline, 'nodes' | 'edges'>, previous: PipelineRun, rerun: string[]): Record<string, NodeRun> {
+  const redo = rerunSet(pipeline, rerun)
+  const out: Record<string, NodeRun> = {}
+  for (const n of pipeline.nodes) {
+    const old = previous.nodes[n.id]
+    if (old && !redo.has(n.id) && (old.status === 'done' || old.status === 'skipped')) out[n.id] = { ...old, reused: true }
+  }
+  return out
+}
+
+/** Упавшие и незавершённые блоки прошлого запуска — для «Повторить упавшие» */
+export function failedNodes(run: PipelineRun): string[] {
+  return Object.entries(run.nodes)
+    .filter(([, r]) => r.status === 'error' || r.status === 'idle' || r.status === 'running' || (r.items?.failed ?? 0) > 0)
+    .map(([id]) => id)
+}
+
 export async function runPipeline(
-  pipeline: Pick<Pipeline, 'id' | 'name' | 'nodes' | 'edges' | 'interactions'>,
+  pipeline: Pick<Pipeline, 'id' | 'name' | 'nodes' | 'edges' | 'interactions' | 'sharedMemory'>,
   input: string,
   deps: PipelineDeps,
   hooks: PipelineHooks = {},
-  opts: { signal?: AbortSignal; concurrency?: number; runId?: string } = {},
+  opts: { signal?: AbortSignal; concurrency?: number; runId?: string; resume?: { previous: PipelineRun; rerun: string[] } } = {},
 ): Promise<PipelineRun> {
   const { nodes, edges } = pipeline
   const signal = opts.signal
+  const runId = opts.runId ?? `run_${Date.now().toString(36)}`
+  // Перезапуск: всё, что не зависит от выбранных блоков, берём из прошлого запуска как есть
+  const previous = opts.resume?.previous
+  const reused = previous ? reusedNodes(pipeline, previous, opts.resume!.rerun) : {}
   const run: PipelineRun = {
-    id: opts.runId ?? `run_${Date.now().toString(36)}`,
+    id: runId,
     pipelineId: pipeline.id,
     pipelineName: pipeline.name,
     input,
     status: 'running',
     startedAt: Date.now(),
-    nodes: Object.fromEntries(nodes.map((n) => [n.id, { status: 'idle' } as NodeRun])),
+    nodes: Object.fromEntries(nodes.map((n) => [n.id, reused[n.id] ?? ({ status: 'idle' } as NodeRun)])),
     usage: { ...ZERO_USAGE },
+    memoryId: pipeline.sharedMemory === false ? undefined : (previous?.memoryId ?? runId.replace(/[^\w-]/g, '_')),
     interactions: [],
   }
 
@@ -341,7 +386,7 @@ export async function runPipeline(
   }
 
   // Вызов модели с повторами и запасными моделями
-  const callAgent = async (node: PipelineNode, ctx: ExecContext, extraFeedback?: string, override: { user?: string; quiet?: boolean } = {}): Promise<LLMResult> => {
+  const callAgent = async (node: PipelineNode, ctx: ExecContext, extraFeedback?: string, override: { user?: string; quiet?: boolean; tag?: string } = {}): Promise<LLMResult> => {
     const cfg = effectiveAgentConfig(node, deps.getAgent)
     let user = override.user ?? render(node.config.prompt, ctx, ctx.prevText)
     // Параллельные вызовы «Для каждого» не пишут поток в один и тот же узел
@@ -359,10 +404,12 @@ export async function runPipeline(
     const models = [cfg.model, ...(node.config.fallbackModels ?? []).filter(Boolean)]
     const retries = Math.max(0, Math.min(node.config.retries ?? 1, 5))
     let lastError = 'Неизвестная ошибка'
+    const refusals: string[] = []
     let streamed = ''
     let reasoning = ''
     const tools: ToolTrace[] = []
     for (const model of models) {
+      let clarified = false
       for (let attempt = 0; attempt <= retries; attempt++) {
         throwIfAborted(signal)
         streamed = ''
@@ -385,19 +432,43 @@ export async function runPipeline(
           }
         }
         const res = await deps.llm(
-          { model, messages, temperature: cfg.temperature, maxTokens: cfg.maxTokens, tools: cfg.tools, jsonMode: node.config.jsonMode, sandbox },
+          {
+            model,
+            messages: clarified ? [...messages, { role: 'user' as const, content: REFUSAL_CLARIFICATION }] : messages,
+            temperature: cfg.temperature,
+            maxTokens: cfg.maxTokens,
+            tools: cfg.tools,
+            jsonMode: node.config.jsonMode,
+            sandbox,
+            session: run.memoryId,
+            sessionAuthor: override.tag ? `${node.label} · ${override.tag}` : node.label,
+          },
           { signal, onEvent, meta: { source: 'pipeline', label: node.label } },
         )
         addRunUsage(res.usage)
         if (res.aborted) throw Object.assign(new Error('Остановлено'), { name: 'AbortError' })
-        if (!res.error) return res
+        if (!res.error) {
+          // Отказ — не ошибка API, но и не результат: один повтор с уточнением задачи, потом следующая модель
+          const refusal = detectRefusal(res.text, res.tools.length)
+          if (!refusal) return res
+          refusals.push(model)
+          if (!override.quiet) update(node.id, { refusals: [...refusals] })
+          lastError = refusal === 'empty' ? `Модель ${model} вернула пустой ответ` : `Модель ${model} отказалась: ${res.text.trim().slice(0, 300)}`
+          if (refusal === 'refusal' && !clarified) {
+            clarified = true
+            show({ note: `Отказ ${model} — повтор с уточнением задачи` })
+            attempt-- // повтор с уточнением не расходует попытки на ошибки
+            continue
+          }
+          break
+        }
         lastError = res.error
         // Ошибки ключа и бюджета повторять бессмысленно
         if (/ключ|бюджет|лимит расходов|401|402/i.test(res.error)) throw new Error(res.error)
         if (attempt < retries) await new Promise((r) => setTimeout(r, 800 * 2 ** attempt))
       }
     }
-    throw new Error(lastError)
+    throw new Error(refusals.length ? `${lastError}${models.length > 1 ? ' (запасные модели тоже не справились)' : ' — добавьте блоку запасную модель'}` : lastError)
   }
 
   // Своя копия проекта узла: создаётся один раз за запуск, доработки после проверки идут в ней же
@@ -482,9 +553,13 @@ export async function runPipeline(
         if (!items.length) return { output: 'Нет элементов для обработки', note: '0 элементов' }
         const parallel = Math.max(1, Math.min(node.config.concurrency ?? 3, 10))
         const results: string[] = new Array(items.length)
+        const itemResults: NonNullable<NodeRun['itemResults']> = new Array(items.length)
+        // Перезапуск: успешные элементы прошлого запуска не пересчитываем
+        const cached = new Map((previous?.nodes[node.id]?.itemResults ?? []).filter((r) => r?.ok).map((r) => [r.item, r.text]))
         let usage: Usage = { ...ZERO_USAGE }
         let done = 0
         let failed = 0
+        let reusedItems = 0
         update(node.id, { items: { done, total: items.length, failed }, note: `0 из ${items.length}` })
         let next = 0
         const worker = async () => {
@@ -492,14 +567,23 @@ export async function runPipeline(
             const i = next++
             throwIfAborted(signal)
             const user = render((node.config.prompt?.trim() || '{{item}}').replace(/\{\{\s*(item|элемент)\s*\}\}/gi, () => items[i]).replace(/\{\{\s*(index|номер)\s*\}\}/gi, String(i + 1)), ctx, items[i])
-            try {
-              const res = await callAgent(node, ctx, undefined, { user, quiet: true })
-              usage = addUsage(usage, res.usage)
-              results[i] = res.text
-            } catch (e) {
-              if (isAbort(e) || signal?.aborted) throw e
-              failed++
-              results[i] = `[ошибка: ${e instanceof Error ? e.message : String(e)}]`
+            const hit = cached.get(items[i])
+            if (hit != null) {
+              reusedItems++
+              results[i] = hit
+              itemResults[i] = { item: items[i], text: hit, ok: true }
+            } else {
+              try {
+                const res = await callAgent(node, ctx, undefined, { user, quiet: true, tag: `элемент ${i + 1}` })
+                usage = addUsage(usage, res.usage)
+                results[i] = res.text
+                itemResults[i] = { item: items[i], text: res.text, ok: true }
+              } catch (e) {
+                if (isAbort(e) || signal?.aborted) throw e
+                failed++
+                results[i] = `[ошибка: ${e instanceof Error ? e.message : String(e)}]`
+                itemResults[i] = { item: items[i], text: results[i], ok: false }
+              }
             }
             done++
             update(node.id, { items: { done, total: items.length, failed }, note: `${done} из ${items.length}${failed ? `, ошибок ${failed}` : ''}` })
@@ -508,7 +592,8 @@ export async function runPipeline(
         await Promise.all(Array.from({ length: Math.min(parallel, items.length) }, worker))
         if (failed === items.length) throw new Error(`Все ${items.length} элементов завершились ошибкой: ${results[0]}`)
         const title = (item: string) => itemTitle(item)
-        return { output: results.map((r, i) => `### ${i + 1}. ${title(items[i])}\n${r}`).join('\n\n'), usage, note: `${done} из ${items.length}${failed ? `, ошибок ${failed}` : ''}` }
+        const tail = `${failed ? `, ошибок ${failed}` : ''}${reusedItems ? `, из прошлого запуска ${reusedItems}` : ''}`
+        return { output: results.map((r, i) => `### ${i + 1}. ${title(items[i])}\n${r}`).join('\n\n'), usage, itemResults, note: `${done} из ${items.length}${tail}` }
       }
 
       case 'search': {
@@ -702,7 +787,7 @@ export async function runPipeline(
   // Планировщик: запускаем узел, как только все его входы завершились
   const concurrency = pipeline.interactions ? 1 : Math.max(1, opts.concurrency ?? DEFAULT_CONCURRENCY)
   const running = new Set<Promise<void>>()
-  const started = new Set<string>()
+  const started = new Set<string>(nodes.filter((n) => run.nodes[n.id].reused).map((n) => n.id))
   let fatal: Error | null = null
 
   const launch = (node: PipelineNode) => {

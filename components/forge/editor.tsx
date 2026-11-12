@@ -21,7 +21,7 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/misc'
 import { Popover, PopoverContent, PopoverTrigger, Sheet, Tip } from '@/components/ui/overlay'
 import { continueStep, startPipeline, stopPipeline, usePipelineRunner, setStepMode } from '@/lib/client/pipeline-runner'
-import { estimatePipelineCost, findCycle, NODE_META, validatePipeline, type NodeKind, type Pipeline, type PipelineEdge, type PipelineNode } from '@/lib/engine/pipeline'
+import { estimatePipelineCost, findCycle, NODE_META, validatePipeline, type NodeKind, type Pipeline, type PipelineEdge, type PipelineNode, type PipelineRun } from '@/lib/engine/pipeline'
 import { getAgent } from '@/lib/stores/agents'
 import { modelById, resolveModelId } from '@/lib/stores/catalog'
 import { usePipelines } from '@/lib/stores/pipelines'
@@ -195,6 +195,18 @@ function Canvas({ pipeline, onChange }: { pipeline: Pipeline; onChange: (p: Pipe
     setPanel('run')
     setViewRunId(null)
     const result = await startPipeline(pipeline, input, step)
+    report(result)
+  }
+
+  /** Перезапуск после прошлого запуска: выбранные блоки и всё, что от них зависит */
+  const rerun = async (previous: PipelineRun, nodeIds: string[]) => {
+    if (!nodeIds.length) return
+    setPanel('run')
+    setViewRunId(null)
+    report(await startPipeline(pipeline, previous.input, false, { previous, rerun: nodeIds }))
+  }
+
+  const report = (result: PipelineRun) => {
     if (result.status === 'done') toast.success('Пайплайн выполнен', { description: result.error })
     else if (result.status === 'error') toast.error('Пайплайн завершился с ошибкой', { description: result.error })
   }
@@ -205,6 +217,7 @@ function Canvas({ pipeline, onChange }: { pipeline: Pipeline; onChange: (p: Pipe
         pipeline={pipeline}
         node={selected}
         run={currentRun?.pipelineId === pipeline.id ? currentRun.nodes[selected.id] : undefined}
+        onRerun={currentRun?.pipelineId === pipeline.id && currentRun.status !== 'running' && !usePipelineRunner.getState().active[pipeline.id] ? () => void rerun(currentRun, [selected.id]) : undefined}
         onClose={() => {
           setSelectedId(null)
           setPanel('run')
@@ -225,7 +238,7 @@ function Canvas({ pipeline, onChange }: { pipeline: Pipeline; onChange: (p: Pipe
         }}
       />
     ) : (
-      <RunPanel pipeline={pipeline} run={currentRun?.pipelineId === pipeline.id ? currentRun : undefined} onRun={run} onSelectRun={setViewRunId} onSelectNode={(id) => { setSelectedId(id); setPanel('node') }} onChange={onChange} />
+      <RunPanel pipeline={pipeline} run={currentRun?.pipelineId === pipeline.id ? currentRun : undefined} onRun={run} onRerun={(prev, ids) => void rerun(prev, ids)} onSelectRun={setViewRunId} onSelectNode={(id) => { setSelectedId(id); setPanel('node') }} onChange={onChange} />
     )
 
   return (

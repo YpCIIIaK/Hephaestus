@@ -1,6 +1,6 @@
 'use client'
 
-import { Copy, Plus, Trash2, X } from 'lucide-react'
+import { Copy, Plus, RotateCcw, Trash2, X } from 'lucide-react'
 import { useMemo } from 'react'
 import { Markdown } from '@/components/markdown'
 import { ModelPicker } from '@/components/model-picker'
@@ -338,8 +338,14 @@ export function NodeOutput({ run }: { run: NodeRun }) {
         <Badge tone={run.status === 'done' ? 'success' : run.status === 'error' ? 'danger' : run.status === 'running' ? 'accent' : 'neutral'}>
           {{ idle: 'ожидает', running: 'выполняется', done: 'готово', skipped: 'пропущен', error: 'ошибка' }[run.status]}
         </Badge>
+        {run.reused && <Badge>из прошлого запуска</Badge>}
         {run.note && <span className="text-xs text-muted">{run.note}</span>}
       </div>
+      {!!run.refusals?.length && (
+        <div className="rounded-lg border border-warning/30 bg-warning/8 p-2.5 text-xs">
+          Отказались выполнять: <span className="font-mono">{[...new Set(run.refusals)].join(', ')}</span>. Блок повторял запрос с уточнением задачи и переходил к запасным моделям.
+        </div>
+      )}
       <UsageLine usage={run.usage} latencyMs={run.startedAt && run.endedAt ? run.endedAt - run.startedAt : undefined} />
       {!!run.received?.length && <details className="rounded-xl border border-border p-3" open>
         <summary className="cursor-pointer text-xs font-semibold">Получено от других узлов · {run.received.length}</summary>
@@ -371,10 +377,13 @@ export function Inspector({
   onDelete,
   onDuplicate,
   onClose,
+  onRerun,
 }: {
   pipeline: Pipeline
   node: PipelineNode
   run?: NodeRun
+  /** Перезапустить этот блок и всё после него, остальное взять из последнего запуска */
+  onRerun?: () => void
   onChange: (patch: Partial<PipelineNode>) => void
   onDelete: () => void
   onDuplicate: () => void
@@ -409,7 +418,14 @@ export function Inspector({
         <ConfigFields node={node} pipeline={pipeline} set={set} />
         {run && run.status !== 'idle' && (
           <div className="border-t border-border pt-4">
-            <div className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-faint">Последний запуск</div>
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <span className="text-[11px] font-semibold uppercase tracking-wider text-faint">Последний запуск</span>
+              {onRerun && node.kind !== 'input' && (
+                <Button size="sm" variant="ghost" onClick={onRerun} title="Этот блок и всё, что после него, выполнятся заново; остальное возьмётся из последнего запуска">
+                  <RotateCcw /> Перезапустить отсюда
+                </Button>
+              )}
+            </div>
             <NodeOutput run={run} />
           </div>
         )}

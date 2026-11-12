@@ -1,7 +1,7 @@
 'use client'
 
 import { create } from 'zustand'
-import { runPipeline, type NodeRun, type Pipeline, type PipelineNode } from '../engine/pipeline'
+import { reusedNodes, runPipeline, type NodeRun, type Pipeline, type PipelineNode, type PipelineRun } from '../engine/pipeline'
 import { getAgent } from '../stores/agents'
 import { usePipelines } from '../stores/pipelines'
 import { uid } from '../utils'
@@ -45,8 +45,13 @@ export function setStepMode(pipelineId: string, step: boolean) {
   if (!step) continueStep(pipelineId)
 }
 
-export async function startPipeline(pipeline: Pipeline, input: string, step = false) {
+/**
+ * Запуск пайплайна. resume — перезапуск после прошлого запуска: блоки rerun и
+ * всё, что от них зависит, выполняются заново, остальное берётся как было.
+ */
+export async function startPipeline(pipeline: Pipeline, input: string, step = false, resume?: { previous: PipelineRun; rerun: string[] }) {
   const runId = uid('run')
+  const reused = resume ? reusedNodes(pipeline, resume.previous, resume.rerun) : {}
   const ac = new AbortController()
   controllers.set(pipeline.id, ac)
   const store = usePipelines.getState()
@@ -57,8 +62,9 @@ export async function startPipeline(pipeline: Pipeline, input: string, step = fa
     input,
     status: 'running',
     startedAt: Date.now(),
-    nodes: Object.fromEntries(pipeline.nodes.map((n) => [n.id, { status: 'idle' as const }])),
+    nodes: Object.fromEntries(pipeline.nodes.map((n) => [n.id, reused[n.id] ?? { status: 'idle' as const }])),
     usage: { promptTokens: 0, completionTokens: 0, cost: 0 },
+    memoryId: pipeline.sharedMemory === false ? undefined : (resume?.previous.memoryId ?? runId),
     interactions: [],
   })
   const runner = usePipelineRunner.getState()
@@ -97,9 +103,9 @@ export async function startPipeline(pipeline: Pipeline, input: string, step = fa
         const current = usePipelines.getState().runs.find((r) => r.id === runId)
         usePipelines.getState().patchRun(runId, { interactions: [...(current?.interactions ?? []), entry] })
       } },
-      { signal: ac.signal, runId, concurrency: step ? 1 : 4 },
+      { signal: ac.signal, runId, concurrency: step ? 1 : 4, resume },
     )
-    usePipelines.getState().patchRun(runId, { status: run.status, endedAt: run.endedAt, output: run.output, error: run.error, usage: run.usage })
+    usePipelines.getState().patchRun(runId, { status: run.status, endedAt: run.endedAt, output: run.output, error: run.error, usage: run.usage, memoryId: run.memoryId })
     return run
   } finally {
     if (timer) clearTimeout(timer)

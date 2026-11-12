@@ -157,14 +157,15 @@ export function AnalyticsView() {
   }, [list, period])
 
   const byModel = useMemo(() => {
-    const m = new Map<string, { model: string; cost: number; tokens: number; calls: number; errors: number; latency: number }>()
+    const m = new Map<string, { model: string; cost: number; tokens: number; calls: number; errors: number; refusals: number; latency: number }>()
     for (const e of list) {
-      const r = m.get(e.model) ?? { model: e.model, cost: 0, tokens: 0, calls: 0, errors: 0, latency: 0 }
+      const r = m.get(e.model) ?? { model: e.model, cost: 0, tokens: 0, calls: 0, errors: 0, refusals: 0, latency: 0 }
       r.cost += e.cost ?? 0
       r.tokens += e.promptTokens + e.completionTokens
       r.calls++
       r.latency += e.latencyMs
       if (!e.ok) r.errors++
+      if (e.refused) r.refusals++
       m.set(e.model, r)
     }
     return Array.from(m.values()).sort((a, b) => b.cost - a.cost || b.tokens - a.tokens)
@@ -279,6 +280,7 @@ export function AnalyticsView() {
                         <span className="font-mono text-[11px] tabular-nums text-faint">
                           {m.calls} выз. · {formatTokens(m.tokens)} ток. · {formatMs(m.latency / m.calls)}
                           {m.errors ? ` · ${m.errors} ош.` : ''}
+                          {m.refusals ? ` · ${m.refusals} отказ.` : ''}
                         </span>
                       </div>
                     ))}

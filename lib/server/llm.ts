@@ -142,11 +142,55 @@ function describeHttpError(status: number, body: string): string {
   return `Ошибка ${status}: ${msg.slice(0, 400)}${hint}`
 }
 
+/**
+ * Сколько ждать хоть каких-то данных от провайдера. Зависший поток иначе
+ * держит запрос вечно (бесплатные модели под нагрузкой так делают). OpenRouter
+ * шлёт служебные комментарии, пока модель думает, так что молчание — это сбой.
+ * Локальной модели Ollama даём больше: первая загрузка в память бывает долгой.
+ */
+export const STREAM_IDLE_MS = Number(process.env.HEPHAESTUS_STREAM_IDLE_MS) || 240_000
+
 async function* streamStep(
   ep: Endpoint,
   body: Record<string, unknown>,
   signal: AbortSignal | undefined,
   toolNames: string[] = [],
+): AsyncGenerator<LLMEvent, StepResult> {
+  const idleMs = ep.provider === 'ollama' ? Math.max(STREAM_IDLE_MS, 600_000) : STREAM_IDLE_MS
+  const ac = new AbortController()
+  const onAbort = () => ac.abort()
+  signal?.addEventListener('abort', onAbort)
+  let stalled = false
+  let idle: ReturnType<typeof setTimeout> | undefined
+  const touch = () => {
+    clearTimeout(idle)
+    idle = setTimeout(() => {
+      stalled = true
+      ac.abort()
+    }, idleMs)
+  }
+  const stallError = () => new GatewayError(`Модель не присылает данные ${Math.round(idleMs / 1000)} с — поток прерван`, 504, { retryable: true })
+  touch()
+  try {
+    return yield* streamBody(ep, body, ac.signal, signal, toolNames, touch, () => stalled, stallError)
+  } catch (e) {
+    if (stalled && !signal?.aborted) throw stallError()
+    throw e
+  } finally {
+    clearTimeout(idle)
+    signal?.removeEventListener('abort', onAbort)
+  }
+}
+
+async function* streamBody(
+  ep: Endpoint,
+  body: Record<string, unknown>,
+  signal: AbortSignal,
+  outer: AbortSignal | undefined,
+  toolNames: string[],
+  touch: () => void,
+  isStalled: () => boolean,
+  stallError: () => GatewayError,
 ): AsyncGenerator<LLMEvent, StepResult> {
   const res = await fetch(ep.url, {
     method: 'POST',
@@ -154,7 +198,8 @@ async function* streamStep(
     body: JSON.stringify(body),
     signal,
   }).catch((e: unknown) => {
-    if (signal?.aborted) throw e
+    if (isStalled() && !outer?.aborted) throw stallError()
+    if (outer?.aborted) throw e
     const where = ep.provider === 'ollama' ? 'Ollama не отвечает — запущен ли он?' : 'Нет соединения с провайдером'
     throw new GatewayError(`${where} (${e instanceof Error ? e.message : String(e)})`, 502, { network: true })
   })
@@ -249,6 +294,7 @@ async function* streamStep(
     for (;;) {
       const { done, value } = await reader.read()
       if (done) break
+      touch()
       parser.push(decoder.decode(value, { stream: true }))
       while (queue.length) yield queue.shift()!
       if (streamError) break
