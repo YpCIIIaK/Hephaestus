@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
-import { parseBody, rejectCrossSite } from '@/lib/server/http'
-import { saveServerSettings } from '@/lib/server/settings'
+import { errorMessage, jsonError, parseBody, rejectCrossSite } from '@/lib/server/http'
+import { MAX_COMMAND_TIMEOUT_SEC, saveServerSettings } from '@/lib/server/settings'
 import { getServerStatus } from '@/lib/server/status'
 
 export const dynamic = 'force-dynamic'
@@ -13,6 +13,9 @@ const schema = z.object({
   ollamaUrl: url.optional(),
   customUrl: url.optional(),
   customKey: z.string().max(400).optional(),
+  workspaceDir: z.string().max(1000).optional(),
+  terminal: z.enum(['off', 'full']).optional(),
+  commandTimeoutSec: z.number().int().min(5).max(MAX_COMMAND_TIMEOUT_SEC).optional(),
 })
 
 export async function POST(req: Request) {
@@ -20,6 +23,10 @@ export async function POST(req: Request) {
   if (denied) return denied
   const parsed = await parseBody(req, schema)
   if ('error' in parsed) return parsed.error
-  await saveServerSettings(parsed.data)
+  try {
+    await saveServerSettings(parsed.data)
+  } catch (e) {
+    return jsonError(errorMessage(e))
+  }
   return NextResponse.json(await getServerStatus())
 }

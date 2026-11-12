@@ -40,7 +40,7 @@ export interface LLMMessage {
 }
 
 /** Наборы инструментов, которые можно выдать модели */
-export type ToolsetId = 'web' | 'files_read' | 'files_write' | 'knowledge' | 'skills'
+export type ToolsetId = 'web' | 'files_read' | 'files_write' | 'code' | 'terminal' | 'knowledge' | 'skills'
 
 export interface LLMRequest {
   model: string
@@ -97,9 +97,14 @@ export interface ServerStatus {
   ollama: { url: string; reachable: boolean; models: number }
   custom: { url: string | null; configured: boolean }
   searxng: boolean
+  /** Абсолютный путь к рабочей папке моделей */
+  workspace: string
+  /** Задана ли папка в настройках (иначе — по умолчанию или из .env) */
+  workspaceCustom: boolean
+  terminal: { mode: 'off' | 'full'; timeoutSec: number; shell: string }
+  ripgrep: boolean
   /** Свой метапоиск: поисковики и их состояние */
   search: { id: string; name: string; pausedUntil?: number; lastError?: string; ok: number; failed: number }[]
-  workspace: string
 }
 
 // ─── Навыки ──────────────────────────────────────────────────────────────

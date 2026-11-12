@@ -19,9 +19,9 @@ const schema = z.object({
   messages: z.array(message).min(1),
   temperature: z.number().min(0).max(2).optional(),
   maxTokens: z.number().int().positive().max(200_000).optional(),
-  tools: z.array(z.enum(['web', 'files_read', 'files_write', 'knowledge', 'skills'])).optional(),
+  tools: z.array(z.enum(['web', 'files_read', 'files_write', 'code', 'terminal', 'knowledge', 'skills'])).optional(),
   jsonMode: z.boolean().optional(),
-  maxToolSteps: z.number().int().min(0).max(20).optional(),
+  maxToolSteps: z.number().int().min(0).max(50).optional(),
 })
 
 export async function POST(req: Request) {

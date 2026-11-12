@@ -8,16 +8,26 @@ export const TOOL_LABELS: Record<string, string> = {
   write_file: 'Запись файла',
   edit_file: 'Правка файла',
   delete_file: 'Удаление',
+  move_file: 'Перемещение',
+  search_code: 'Поиск в коде',
+  find_files: 'Поиск файлов',
+  codebase_search: 'Поиск по смыслу',
+  run_command: 'Команда',
+  start_process: 'Фоновый процесс',
+  process_output: 'Вывод процесса',
+  stop_process: 'Остановка процесса',
   knowledge_search: 'База знаний',
   load_skill: 'Навык',
 }
 
 export const TOOLSET_INFO: Record<ToolsetId, { label: string; hint: string }> = {
   web: { label: 'Интернет', hint: 'Поиск и чтение веб-страниц' },
-  files_read: { label: 'Чтение файлов', hint: 'Доступ на чтение к папке workspace' },
-  files_write: { label: 'Запись файлов', hint: 'Создание и правка файлов в workspace' },
+  files_read: { label: 'Чтение файлов', hint: 'Чтение файлов рабочей папки' },
+  files_write: { label: 'Запись файлов', hint: 'Создание, правка, перемещение и удаление файлов в рабочей папке' },
+  code: { label: 'Поиск в коде', hint: 'Точный поиск (ripgrep), файлы по маске и поиск по смыслу в рабочей папке' },
+  terminal: { label: 'Терминал', hint: 'Команды в рабочей папке: тесты, сборка, запуск. Включается в настройках' },
   knowledge: { label: 'База знаний', hint: 'Поиск по загруженным документам' },
   skills: { label: 'Навыки', hint: 'Инструкции из папки skills/' },
 }
 
-export const ALL_TOOLSETS: ToolsetId[] = ['web', 'knowledge', 'files_read', 'files_write', 'skills']
+export const ALL_TOOLSETS: ToolsetId[] = ['web', 'knowledge', 'files_read', 'files_write', 'code', 'terminal', 'skills']

@@ -23,6 +23,15 @@ const PRESETS: { title: string; hint: string; targets: ChatTarget[] }[] = [
     ],
   },
   {
+    title: 'Проверка кода',
+    hint: 'Ревьюер, аудитор безопасности и тестировщик в рабочей папке',
+    targets: [
+      { kind: 'agent', id: 'reviewer' },
+      { kind: 'agent', id: 'security' },
+      { kind: 'agent', id: 'tester' },
+    ],
+  },
+  {
     title: 'Спор с собой',
     hint: 'Аналитик против адвоката дьявола',
     targets: [
@@ -48,7 +57,7 @@ export function EmptyChat({ onPick, onPreset }: { onPick: (t: string) => void; o
         </h2>
         <p className="mx-auto mt-3 max-w-xl text-center text-[15px] text-muted">Задайте вопрос одной модели или сразу нескольким — ответы придут параллельно, а судья соберёт из них лучший.</p>
 
-        <div className="mt-8 grid grid-cols-2 gap-2 md:grid-cols-4">
+        <div className="mt-8 grid grid-cols-2 gap-2 md:grid-cols-3">
           {PRESETS.map((p) => (
             <button key={p.title} onClick={() => onPreset(p.targets)} className="rounded-xl border border-border bg-surface/70 px-3 py-2.5 text-left transition-colors hover:border-accent/50 hover:bg-surface">
               <div className="text-[13px] font-semibold">{p.title}</div>

@@ -1,14 +1,15 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import type { WorkspaceEntry } from '../types'
-import { WORKSPACE_DIR } from './paths'
+import { getWorkspaceDir } from './settings'
 
-// Песочница для файловых инструментов ИИ. Все пути относительные и не могут
-// выйти за пределы WORKSPACE_DIR — ни через «..», ни через символические ссылки.
+// Песочница для файловых инструментов ИИ: рабочая папка из настроек.
+// Все пути относительные и не могут выйти за её пределы — ни через «..»,
+// ни через символические ссылки.
 
 const MAX_READ_BYTES = 2_000_000
 const MAX_TREE_ENTRIES = 2000
-const SKIP_DIRS = new Set(['node_modules', '.git', '.next', '__pycache__', '.venv'])
+export const SKIP_DIRS = new Set(['node_modules', '.git', '.next', '__pycache__', '.venv', 'venv', 'dist', 'build', 'target', 'coverage', '.cache', '.turbo'])
 
 export class WorkspaceError extends Error {
   constructor(message: string, readonly status = 400) {
@@ -16,8 +17,26 @@ export class WorkspaceError extends Error {
   }
 }
 
-export async function ensureWorkspace(): Promise<void> {
-  await fs.mkdir(/* turbopackIgnore: true */ WORKSPACE_DIR, { recursive: true })
+export async function ensureWorkspace(): Promise<string> {
+  const root = await getWorkspaceDir()
+  await fs.mkdir(/* turbopackIgnore: true */ root, { recursive: true })
+  return root
+}
+
+// Несколько моделей могут работать с папкой одновременно: запись, правка и
+// удаление одного файла выполняются по очереди, чтобы правки не терялись.
+const locks = new Map<string, Promise<unknown>>()
+
+export async function withFileLock<T>(abs: string, fn: () => Promise<T>): Promise<T> {
+  const prev = locks.get(abs) ?? Promise.resolve()
+  const run = prev.catch(() => {}).then(fn)
+  const tail = run.catch(() => {})
+  locks.set(abs, tail)
+  try {
+    return await run
+  } finally {
+    if (locks.get(abs) === tail) locks.delete(abs)
+  }
 }
 
 function isInside(parent: string, child: string): boolean {
@@ -26,25 +45,25 @@ function isInside(parent: string, child: string): boolean {
 }
 
 /** Превращает пользовательский путь в абсолютный внутри песочницы */
-export async function resolveWorkspacePath(input: string): Promise<{ abs: string; rel: string }> {
+export async function resolveWorkspacePath(input: string): Promise<{ abs: string; rel: string; root: string }> {
   const cleaned = String(input ?? '')
     .replace(/\\/g, '/')
     .replace(/^\/+/, '')
     .replace(/^workspace\//, '')
     .trim()
   if (cleaned.includes('\0')) throw new WorkspaceError('Недопустимый путь')
-  const abs = path.resolve(WORKSPACE_DIR, cleaned || '.')
-  if (!isInside(WORKSPACE_DIR, abs)) throw new WorkspaceError('Путь выходит за пределы workspace', 403)
+  const root = await ensureWorkspace()
+  const abs = path.resolve(root, cleaned || '.')
+  if (!isInside(root, abs)) throw new WorkspaceError('Путь выходит за пределы рабочей папки', 403)
 
   // Проверяем реальный путь ближайшего существующего предка: ссылка внутри
   // песочницы не должна вести наружу.
-  await ensureWorkspace()
-  const realRoot = await fs.realpath(/* turbopackIgnore: true */ WORKSPACE_DIR)
+  const realRoot = await fs.realpath(/* turbopackIgnore: true */ root)
   let probe = abs
   for (;;) {
     try {
       const real = await fs.realpath(/* turbopackIgnore: true */ probe)
-      if (!isInside(realRoot, real)) throw new WorkspaceError('Путь выходит за пределы workspace', 403)
+      if (!isInside(realRoot, real)) throw new WorkspaceError('Путь выходит за пределы рабочей папки', 403)
       break
     } catch (e) {
       if (e instanceof WorkspaceError) throw e
@@ -53,24 +72,27 @@ export async function resolveWorkspacePath(input: string): Promise<{ abs: string
       probe = parent
     }
   }
-  return { abs, rel: path.relative(WORKSPACE_DIR, abs).split(path.sep).join('/') }
+  return { abs, rel: path.relative(root, abs).split(path.sep).join('/'), root }
 }
 
-export async function listTree(): Promise<WorkspaceEntry[]> {
-  await ensureWorkspace()
+/** Дерево рабочей папки или её подпапки; depth ограничивает глубину */
+export async function listTree(sub = '', depth = Infinity): Promise<WorkspaceEntry[]> {
+  const { abs: start, root } = await resolveWorkspacePath(sub)
   let count = 0
-  async function walk(dir: string): Promise<WorkspaceEntry[]> {
-    const entries = await fs.readdir(/* turbopackIgnore: true */ dir, { withFileTypes: true })
+  async function walk(dir: string, level: number): Promise<WorkspaceEntry[]> {
+    const entries = await fs.readdir(/* turbopackIgnore: true */ dir, { withFileTypes: true }).catch(() => {
+      throw new WorkspaceError(`Папка не найдена: ${sub}`, 404)
+    })
     entries.sort((a, b) => Number(b.isDirectory()) - Number(a.isDirectory()) || a.name.localeCompare(b.name))
     const out: WorkspaceEntry[] = []
     for (const e of entries) {
       if (count++ > MAX_TREE_ENTRIES) break
       if (e.name.startsWith('.') && e.name !== '.env.example') continue
       const abs = path.join(dir, e.name)
-      const rel = path.relative(WORKSPACE_DIR, abs).split(path.sep).join('/')
+      const rel = path.relative(root, abs).split(path.sep).join('/')
       if (e.isDirectory()) {
         if (SKIP_DIRS.has(e.name)) continue
-        out.push({ path: rel, name: e.name, type: 'dir', children: await walk(abs) })
+        out.push({ path: rel, name: e.name, type: 'dir', children: level < depth ? await walk(abs, level + 1) : undefined })
       } else if (e.isFile()) {
         const st = await fs.stat(/* turbopackIgnore: true */ abs)
         out.push({ path: rel, name: e.name, type: 'file', size: st.size })
@@ -78,7 +100,7 @@ export async function listTree(): Promise<WorkspaceEntry[]> {
     }
     return out
   }
-  return walk(WORKSPACE_DIR)
+  return walk(start, 1)
 }
 
 export function flattenTree(tree: WorkspaceEntry[]): string[] {
@@ -87,6 +109,7 @@ export function flattenTree(tree: WorkspaceEntry[]): string[] {
     for (const it of items) {
       if (it.type === 'file') out.push(it.path)
       else if (it.children) visit(it.children)
+      else out.push(`${it.path}/`)
     }
   }
   visit(tree)
@@ -119,33 +142,81 @@ export async function readWorkspaceFile(
 export async function writeWorkspaceFile(p: string, content: string): Promise<{ path: string; bytes: number; created: boolean }> {
   const { abs, rel } = await resolveWorkspacePath(p)
   if (!rel || rel === '.') throw new WorkspaceError('Укажите имя файла')
-  const existed = await fs
-    .stat(/* turbopackIgnore: true */ abs)
-    .then((s) => s.isFile())
-    .catch(() => false)
-  await fs.mkdir(/* turbopackIgnore: true */ path.dirname(abs), { recursive: true })
-  await fs.writeFile(/* turbopackIgnore: true */ abs, content, 'utf-8')
-  return { path: rel, bytes: Buffer.byteLength(content, 'utf-8'), created: !existed }
+  return withFileLock(abs, async () => {
+    const existed = await fs
+      .stat(/* turbopackIgnore: true */ abs)
+      .then((s) => s.isFile())
+      .catch(() => false)
+    await fs.mkdir(/* turbopackIgnore: true */ path.dirname(abs), { recursive: true })
+    await fs.writeFile(/* turbopackIgnore: true */ abs, content, 'utf-8')
+    return { path: rel, bytes: Buffer.byteLength(content, 'utf-8'), created: !existed }
+  })
 }
 
-/** Замена фрагмента: oldText должен встречаться в файле ровно один раз */
-export async function editWorkspaceFile(p: string, oldText: string, newText: string): Promise<{ path: string }> {
-  const { content, path: rel } = await readWorkspaceFile(p)
+/** Номера строк в стиле read_file («  12│ »), которые модель могла скопировать во фрагмент */
+const LINE_NUMBER_PREFIX = /^ *\d+│ ?/gm
+
+/**
+ * Замена фрагмента: oldText должен встречаться в файле ровно один раз (или
+ * все вхождения при replaceAll). Чтение, замена и запись идут под одной
+ * блокировкой, чтобы параллельные правки разных моделей не затирали друг друга.
+ */
+export async function editWorkspaceFile(
+  p: string,
+  oldText: string,
+  newText: string,
+  opts: { replaceAll?: boolean } = {},
+): Promise<{ path: string; replacements: number }> {
   if (!oldText) throw new WorkspaceError('Пустой фрагмент для замены')
-  const first = content.indexOf(oldText)
-  if (first === -1) throw new WorkspaceError('Фрагмент для замены не найден в файле')
-  if (content.indexOf(oldText, first + oldText.length) !== -1) {
-    throw new WorkspaceError('Фрагмент встречается несколько раз — добавьте больше контекста')
-  }
-  await writeWorkspaceFile(rel, content.slice(0, first) + newText + content.slice(first + oldText.length))
-  return { path: rel }
+  const { abs, rel } = await resolveWorkspacePath(p)
+  return withFileLock(abs, async () => {
+    const { content } = await readWorkspaceFile(rel)
+    // Модели иногда копируют фрагмент вместе с номерами строк или с другими переводами строк
+    const crlf = content.includes('\r\n')
+    const candidates = [oldText, oldText.replace(LINE_NUMBER_PREFIX, '')].flatMap((t) => [t, crlf ? t.replace(/\r?\n/g, '\r\n') : t.replace(/\r\n/g, '\n')])
+    const needle = candidates.find((t) => t && content.includes(t))
+    if (!needle) throw new WorkspaceError('Фрагмент для замены не найден в файле — перечитайте файл и скопируйте фрагмент точно')
+    const replacement = needle === oldText ? newText : newText.replace(LINE_NUMBER_PREFIX, '')
+    const count = content.split(needle).length - 1
+    if (count > 1 && !opts.replaceAll) {
+      throw new WorkspaceError(`Фрагмент встречается ${count} раз — добавьте больше контекста или укажите replace_all`)
+    }
+    const next = opts.replaceAll ? content.split(needle).join(replacement) : content.replace(needle, () => replacement)
+    await fs.writeFile(/* turbopackIgnore: true */ abs, next, 'utf-8')
+    return { path: rel, replacements: opts.replaceAll ? count : 1 }
+  })
 }
 
 export async function deleteWorkspacePath(p: string): Promise<{ path: string }> {
   const { abs, rel } = await resolveWorkspacePath(p)
-  if (!rel || rel === '.') throw new WorkspaceError('Нельзя удалить корень workspace', 403)
-  await fs.rm(/* turbopackIgnore: true */ abs, { recursive: true, force: false }).catch(() => {
-    throw new WorkspaceError(`Не найдено: ${rel}`, 404)
+  if (!rel || rel === '.') throw new WorkspaceError('Нельзя удалить корень рабочей папки', 403)
+  return withFileLock(abs, async () => {
+    await fs.rm(/* turbopackIgnore: true */ abs, { recursive: true, force: false }).catch(() => {
+      throw new WorkspaceError(`Не найдено: ${rel}`, 404)
+    })
+    return { path: rel }
   })
-  return { path: rel }
+}
+
+export async function moveWorkspacePath(from: string, to: string): Promise<{ from: string; to: string }> {
+  const src = await resolveWorkspacePath(from)
+  const dst = await resolveWorkspacePath(to)
+  if (!src.rel || src.rel === '.') throw new WorkspaceError('Нельзя переместить корень рабочей папки', 403)
+  const exists = await fs.stat(/* turbopackIgnore: true */ src.abs).catch(() => null)
+  if (!exists) throw new WorkspaceError(`Не найдено: ${src.rel}`, 404)
+  if (await fs.stat(/* turbopackIgnore: true */ dst.abs).catch(() => null)) throw new WorkspaceError(`Уже существует: ${dst.rel}`, 409)
+  return withFileLock(src.abs, () =>
+    withFileLock(dst.abs, async () => {
+      await fs.mkdir(/* turbopackIgnore: true */ path.dirname(dst.abs), { recursive: true })
+      await fs.rename(/* turbopackIgnore: true */ src.abs, dst.abs)
+      return { from: src.rel, to: dst.rel }
+    }),
+  )
+}
+
+/** Текст с номерами строк — так модели проще ссылаться на места в файле */
+export function numberLines(content: string, firstLine = 1): string {
+  const lines = content.split('\n')
+  const width = String(firstLine + lines.length - 1).length
+  return lines.map((l, i) => `${String(firstLine + i).padStart(width)}│ ${l}`).join('\n')
 }

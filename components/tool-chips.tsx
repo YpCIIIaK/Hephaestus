@@ -1,6 +1,6 @@
 'use client'
 
-import { BookOpenText, CheckCircle2, FilePen, FileText, Globe, Puzzle, XCircle, type LucideIcon } from 'lucide-react'
+import { BookOpenText, CheckCircle2, FilePen, FileSearch, FileText, Globe, Puzzle, SquareTerminal, XCircle, type LucideIcon } from 'lucide-react'
 import { useState } from 'react'
 import { ALL_TOOLSETS, TOOL_LABELS, TOOLSET_INFO } from '@/lib/tool-labels'
 import type { ToolsetId, ToolTrace } from '@/lib/types'
@@ -13,6 +13,8 @@ export const TOOLSET_ICONS: Record<ToolsetId, LucideIcon> = {
   knowledge: BookOpenText,
   files_read: FileText,
   files_write: FilePen,
+  code: FileSearch,
+  terminal: SquareTerminal,
   skills: Puzzle,
 }
 

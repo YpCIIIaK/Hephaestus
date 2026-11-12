@@ -1,12 +1,18 @@
-import path from 'node:path'
 import type { ServerStatus } from '../types'
 import { fetchOllamaModels } from './catalog'
-import { WORKSPACE_DIR } from './paths'
+import { hasRipgrep } from './code-search'
 import { searchStatus } from './search'
-import { getCustomEndpoint, getOllamaUrl, getOpenRouterKey, maskKey } from './settings'
+import { getCustomEndpoint, getOllamaUrl, getOpenRouterKey, getTerminalSettings, getWorkspaceDir, loadServerSettings, maskKey } from './settings'
 
 export async function getServerStatus(): Promise<ServerStatus> {
-  const [{ key, source }, ollamaUrl, custom] = await Promise.all([getOpenRouterKey(), getOllamaUrl(), getCustomEndpoint()])
+  const [{ key, source }, ollamaUrl, custom, workspace, terminal, saved] = await Promise.all([
+    getOpenRouterKey(),
+    getOllamaUrl(),
+    getCustomEndpoint(),
+    getWorkspaceDir(),
+    getTerminalSettings(),
+    loadServerSettings(),
+  ])
   let reachable = false
   let models = 0
   try {
@@ -21,6 +27,9 @@ export async function getServerStatus(): Promise<ServerStatus> {
     custom: { url: custom?.url ?? null, configured: !!custom },
     searxng: !!process.env.SEARXNG_URL,
     search: searchStatus(),
-    workspace: path.relative(process.cwd(), WORKSPACE_DIR) || '.',
+    workspace,
+    workspaceCustom: !!saved.workspaceDir,
+    terminal: { ...terminal, shell: process.platform === 'win32' ? 'cmd.exe' : 'bash' },
+    ripgrep: hasRipgrep(),
   }
 }

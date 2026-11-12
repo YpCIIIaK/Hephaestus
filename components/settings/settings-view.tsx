@@ -1,13 +1,13 @@
 'use client'
 
-import { CheckCircle2, CircleDashed, Cpu, Database, Download, KeyRound, Gauge, MessageSquareText, RefreshCw, Server, Settings2, Sparkles, Upload, XCircle } from 'lucide-react'
+import { CheckCircle2, CircleDashed, Cpu, Database, Download, FolderCog, KeyRound, Gauge, MessageSquareText, RefreshCw, Server, Settings2, Sparkles, TriangleAlert, Upload, XCircle } from 'lucide-react'
 import { useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { ModelPicker } from '@/components/model-picker'
 import { PageHeader } from '@/components/shell/page-header'
 import { Button } from '@/components/ui/button'
 import { FieldRow, Input } from '@/components/ui/field'
-import { Badge, Card, Spinner } from '@/components/ui/misc'
+import { Badge, Card, Segmented, Spinner } from '@/components/ui/misc'
 import { Confirm, Slider, Switch } from '@/components/ui/overlay'
 import { api } from '@/lib/client/llm'
 import { ALIAS_LABELS, pickAliasModel, shortModelName } from '@/lib/models'
@@ -146,9 +146,6 @@ function Connections() {
                 </span>
               )
             })}
-          </span>
-          <span>
-            Папка файлов: <code className="font-mono text-fg">{status.workspace}/</code>
           </span>
         </div>
       )}
@@ -327,6 +324,102 @@ function DataSection() {
   )
 }
 
+function WorkspaceSection() {
+  const status = useCatalog((s) => s.status)
+  const [dir, setDir] = useState<string | null>(null)
+  const [timeout, setTimeoutSec] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [confirmFull, setConfirmFull] = useState(false)
+
+  const save = async (body: Record<string, unknown>, ok = 'Сохранено') => {
+    setBusy(true)
+    try {
+      const st = await api<ServerStatus>('/api/settings', { method: 'POST', json: body })
+      useCatalog.setState({ status: st })
+      setDir(null)
+      setTimeoutSec(null)
+      toast.success(ok)
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const dirValue = dir ?? status?.workspace ?? ''
+  const timeoutValue = timeout ?? String(status?.terminal.timeoutSec ?? 120)
+  return (
+    <Section
+      icon={<FolderCog />}
+      title="Рабочая папка и терминал"
+      description="Папка, с которой модели работают через инструменты: читают и правят файлы, ищут по коду, запускают команды. Выйти за её пределы файловые инструменты не могут."
+    >
+      <FieldRow label="Рабочая папка" hint="Абсолютный путь к папке проекта. Без настройки — папка workspace/ рядом с приложением или HEPHAESTUS_WORKSPACE из .env">
+        <div className="flex gap-2">
+          <Input value={dirValue} onChange={(e) => setDir(e.target.value)} placeholder="/home/user/projects/app или C:\Projects\app" className="font-mono" />
+          <Button disabled={busy || dir == null || !dir.trim() || dir === status?.workspace} onClick={() => save({ workspaceDir: dir!.trim() }, 'Рабочая папка изменена')}>
+            Сохранить
+          </Button>
+          {status?.workspaceCustom && (
+            <Button variant="ghost" disabled={busy} onClick={() => save({ workspaceDir: '' }, 'Вернули папку по умолчанию')}>
+              По умолчанию
+            </Button>
+          )}
+        </div>
+      </FieldRow>
+
+      <div className="space-y-3 border-t border-border pt-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="text-[13px]">
+            Терминал для моделей
+            <span className="block text-xs text-muted">Тесты, сборка, линтеры, git, установка зависимостей и запуск программ в рабочей папке ({status?.terminal.shell ?? 'bash'})</span>
+          </div>
+          <Segmented
+            size="sm"
+            value={status?.terminal.mode ?? 'off'}
+            onChange={(mode) => (mode === 'full' ? setConfirmFull(true) : save({ terminal: 'off' }, 'Терминал выключен'))}
+            options={[
+              { value: 'off', label: 'Выключен' },
+              { value: 'full', label: 'Полный доступ' },
+            ]}
+          />
+        </div>
+        {status?.terminal.mode === 'full' && (
+          <p className="flex gap-2 rounded-lg border border-gold/30 bg-gold/5 p-3 text-xs text-muted">
+            <TriangleAlert className="size-4 shrink-0 text-gold" />
+            Модели выполняют любые команды с вашими правами. Команды стартуют в рабочей папке, ключи API в них не передаются, но сама команда может обратиться к любым файлам компьютера. Не давайте терминал вместе с интернетом моделям, которым не доверяете: прочитанная страница может подсказать вредную команду.
+          </p>
+        )}
+        <FieldRow label="Лимит времени на команду, секунд" hint="Долгие процессы (dev-серверы, watch) модели запускают в фоне — для них лимита нет">
+          <div className="flex gap-2">
+            <Input type="number" min={5} max={1800} value={timeoutValue} onChange={(e) => setTimeoutSec(e.target.value)} className="w-32" />
+            <Button disabled={busy || timeout == null || Number(timeout) === status?.terminal.timeoutSec} onClick={() => save({ commandTimeoutSec: Math.round(Number(timeout)) })}>
+              Сохранить
+            </Button>
+          </div>
+        </FieldRow>
+      </div>
+
+      {status && (
+        <div className="flex flex-wrap gap-x-5 gap-y-1 border-t border-border pt-4 text-xs text-muted">
+          <span>
+            Поиск в коде: <b className="text-fg">{status.ripgrep ? 'ripgrep' : 'встроенный'}</b>
+            {!status.ripgrep && ' — установите ripgrep (rg), чтобы на больших проектах было в разы быстрее'}
+          </span>
+        </div>
+      )}
+      <Confirm
+        open={confirmFull}
+        onOpenChange={setConfirmFull}
+        title="Дать моделям полный доступ к терминалу?"
+        description="Модели смогут выполнять любые команды в рабочей папке с правами вашего пользователя: запускать тесты и сборку, ставить пакеты, менять и удалять файлы. Включайте для своих проектов и моделей, которым доверяете."
+        confirmLabel="Включить"
+        onConfirm={() => save({ terminal: 'full' }, 'Терминал включён')}
+      />
+    </Section>
+  )
+}
+
 export function SettingsView() {
   return (
     <>
@@ -334,6 +427,7 @@ export function SettingsView() {
       <div className="min-h-0 flex-1 overflow-y-auto">
         <div className="mx-auto max-w-3xl space-y-4 px-4 py-6 md:px-6">
           <Connections />
+          <WorkspaceSection />
           <Models />
           <Limits />
           <ChatPrefs />

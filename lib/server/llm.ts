@@ -12,6 +12,9 @@ import { parseTextToolCalls, partialTagLength, TEXT_TOOL_CALL_TAG } from './text
 // Ответ — поток событий LLMEvent; цикл вызова инструментов идёт на сервере.
 
 const DEFAULT_MAX_STEPS = 8
+// Работа с кодом — длинная цепочка: найти, прочитать, поправить, запустить тесты, исправить
+const CODE_MAX_STEPS = 30
+export const MAX_TOOL_STEPS = 50
 // Бесплатные модели OpenRouter часто отвечают 429 («rate-limited upstream»)
 // или «Service temporarily overloaded»: такой запрос безопасно повторить,
 // пока ответ ещё не начался.
@@ -282,7 +285,8 @@ export async function* runLLM(req: LLMRequest, signal?: AbortSignal): AsyncGener
 
   let tools: ToolDefinition[] = await buildTools(req.tools)
   let jsonMode = !!req.jsonMode
-  const maxSteps = Math.min(req.maxToolSteps ?? DEFAULT_MAX_STEPS, 20)
+  const codeWork = req.tools?.some((t) => t === 'code' || t === 'terminal' || t === 'files_write')
+  const maxSteps = Math.min(req.maxToolSteps ?? (codeWork ? CODE_MAX_STEPS : DEFAULT_MAX_STEPS), MAX_TOOL_STEPS)
   const messages = withDate(req.messages)
   let total: Usage = { ...ZERO_USAGE, cost: null }
   let finish = 'stop'
