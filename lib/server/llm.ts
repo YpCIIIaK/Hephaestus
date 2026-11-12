@@ -272,6 +272,16 @@ async function* streamStep(
   return { text, reasoned, toolCalls, usage, finish }
 }
 
+/** Аргументы вызова в каноническом виде: {"a":1, "b":2} и {"b":2,"a":1} — один и тот же вызов */
+function normalizeArgs(raw: string): string {
+  try {
+    const v = JSON.parse(raw || '{}') as Record<string, unknown>
+    return JSON.stringify(Object.fromEntries(Object.entries(v).sort(([a], [b]) => a.localeCompare(b))))
+  } catch {
+    return raw.trim()
+  }
+}
+
 export async function* runLLM(req: LLMRequest, signal?: AbortSignal): AsyncGenerator<LLMEvent> {
   if (process.env.HEPHAESTUS_MOCK_LLM === '1') {
     yield* mockStream(req, signal)
@@ -308,7 +318,17 @@ export async function* runLLM(req: LLMRequest, signal?: AbortSignal): AsyncGener
   let maxTokens = req.maxTokens ?? 4096
   let lowReasoning = false
 
+  // Слабые модели зацикливаются: читают один и тот же файл, повторяют команду
+  const seen = new Map<string, string[]>()
+  const hash = (s: string) => `${s.length}:${s.slice(0, 200)}:${s.slice(-200)}`
+
   for (let step = 0; step <= maxSteps; step++) {
+    if (tools.length && maxSteps >= 6 && step === maxSteps - 3) {
+      messages.push({ role: 'user', content: `[Hephaestus] Осталось 3 действия с инструментами из ${maxSteps}. Заканчивай работу и готовь итоговый ответ.` })
+    }
+    if (tools.length && step === maxSteps) {
+      messages.push({ role: 'user', content: '[Hephaestus] Лимит действий с инструментами исчерпан, инструменты больше недоступны. Напиши итоговый ответ по уже собранным данным: что сделано, что найдено, что осталось.' })
+    }
     const body: Record<string, unknown> = {
       model: upstreamModelId(req.model),
       messages,
@@ -393,13 +413,23 @@ export async function* runLLM(req: LLMRequest, signal?: AbortSignal): AsyncGener
     }
     if (step === maxSteps) {
       yield { t: 'notice', v: `Достигнут лимит шагов с инструментами (${maxSteps})` }
+      if (!result.text.trim()) {
+        yield { t: 'error', message: `Модель исчерпала лимит действий (${maxSteps}) и не дала итогового ответа — сузьте задачу или выберите модель посильнее` }
+      }
       break
     }
 
     messages.push({ role: 'assistant', content: result.text || null, tool_calls: result.toolCalls })
     for (const call of result.toolCalls) {
       yield { t: 'tool_call', id: call.id, name: call.function.name, args: call.function.arguments }
-      const { ok, output } = await inScope(() => runTool(call.function.name, call.function.arguments, signal))
+      const sig = `${call.function.name}\n${normalizeArgs(call.function.arguments)}`
+      const prev = seen.get(sig) ?? []
+      // Тот же вызов дважды подряд вернул одно и то же — третий раз не выполняем
+      const looping = prev.length >= 2 && prev[prev.length - 1] === prev[prev.length - 2]
+      const { ok, output } = looping
+        ? { ok: false, output: `Этот вызов уже выполнялся ${prev.length} раз(а) с тем же результатом — он выше в истории. Не повторяй его: используй полученные данные, сделай другое действие или напиши итоговый ответ.` }
+        : await inScope(() => runTool(call.function.name, call.function.arguments, signal))
+      if (!looping) seen.set(sig, [...prev, hash(output)])
       yield { t: 'tool_result', id: call.id, name: call.function.name, ok, preview: output.slice(0, 600) }
       messages.push({ role: 'tool', tool_call_id: call.id, name: call.function.name, content: output })
     }

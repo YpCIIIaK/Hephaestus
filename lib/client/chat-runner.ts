@@ -11,7 +11,7 @@ import { usePipelines } from '../stores/pipelines'
 import { useSettings } from '../stores/settings'
 import type { LLMEvent, ToolsetId, ToolTrace } from '../types'
 import { uid } from '../utils'
-import { api, callLLM, callTool } from './llm'
+import { api, callLLM, callLLMSafe, callTool, needsScratchCopy } from './llm'
 
 // Логика чата: параллельные ответы участников, судья, автозаголовок.
 
@@ -99,7 +99,7 @@ async function runTarget(conv: Conversation, turnIndex: number, target: ChatTarg
   const turn = conv.turns[turnIndex]
   const key = targetKey(target)
   const started = Date.now()
-  patchReply(conv.id, turn.id, key, { status: 'streaming', text: '', reasoning: '', tools: [], notices: [], error: undefined, usage: undefined, startedAt: started, progress: undefined, received: [] })
+  patchReply(conv.id, turn.id, key, { status: 'streaming', text: '', reasoning: '', tools: [], notices: [], error: undefined, usage: undefined, startedAt: started, progress: undefined, received: [], sandbox: undefined })
   const settings = useSettings.getState()
 
   if (target.kind === 'pipeline') {
@@ -116,7 +116,7 @@ async function runTarget(conv: Conversation, turnIndex: number, target: ChatTarg
     const run = await runPipeline(
       pipeline,
       userContent(turn),
-      { llm: callLLM, tool: callTool, getAgent },
+      { llm: callLLMSafe, tool: callTool, getAgent },
       {
         onNode: (nodeId, p) => {
           usePipelines.getState().patchNodeRun(runId, nodeId, p)
@@ -173,11 +173,14 @@ async function runTarget(conv: Conversation, turnIndex: number, target: ChatTarg
     messages.unshift({ role: 'system', content: `Ответы других участников этого обсуждения. Учитывай их и явно называй участника, если дополняешь или оспариваешь его вывод:\n\n${received.map((item) => `${item.name}: ${item.text}`).join('\n\n')}` })
     patchReply(conv.id, turn.id, key, { received })
   }
-  // Отдельная копия проекта: участник правит её, а не оригинал
+  // Отдельная копия проекта: участник правит её, а не оригинал. Проверяющий с
+  // терминалом получает свежую копию на каждый ход — видит актуальный проект,
+  // но не может изменить его командами.
   let sandbox: string | undefined
-  if (conv.isolate && tools.includes('files_write')) {
+  const scratch = needsScratchCopy(tools)
+  if ((conv.isolate && tools.includes('files_write')) || scratch) {
     try {
-      sandbox = await ensureSandbox(conv.id, key, describeTarget(target).name)
+      sandbox = scratch ? await freshSandbox(conv.id, key, describeTarget(target).name) : await ensureSandbox(conv.id, key, describeTarget(target).name)
     } catch (e) {
       patchReply(conv.id, turn.id, key, { status: 'error', error: `Не удалось создать копию проекта: ${e instanceof Error ? e.message : String(e)}` })
       return
@@ -228,6 +231,22 @@ async function runTarget(conv: Conversation, turnIndex: number, target: ChatTarg
     model: res.model,
   })
   if (sandbox) patchReply(conv.id, turn.id, key, { sandbox: await sandboxSummary(sandbox) })
+}
+
+/** Новая копия на этот ход; предыдущая копия участника удаляется */
+async function freshSandbox(convId: string, key: string, label: string): Promise<string> {
+  const conv = getConv(convId)
+  const old = conv?.sandboxes?.[key]
+  if (conv && old) {
+    void api(`/api/sandboxes?id=${old}`, { method: 'DELETE' }).catch(() => {})
+    for (const t of conv.turns) {
+      const r = t.replies[key]
+      if (r?.sandbox?.id === old) patchReply(convId, t.id, key, { sandbox: { ...r.sandbox, removed: true } })
+    }
+    const { [key]: _, ...rest } = conv.sandboxes ?? {}
+    useChats.getState().patch(convId, { sandboxes: rest })
+  }
+  return ensureSandbox(convId, key, label)
 }
 
 /** Копия проекта участника: одна на весь диалог, чтобы правки копились от хода к ходу */

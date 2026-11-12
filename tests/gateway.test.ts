@@ -226,3 +226,42 @@ describe('шлюз: вызовы инструментов текстом', async
     expect(events.filter((e) => e.t === 'text').map((e) => (e as { v: string }).v).join('')).toBe('Пример: <tool_call>')
   })
 })
+
+describe('шлюз: зацикливание и лимит шагов', () => {
+  const toolCall = (id: string, name: string, args: string) => sse([{ choices: [{ delta: { tool_calls: [{ index: 0, id, function: { name, arguments: args } }] }, finish_reason: 'tool_calls' }] }])
+
+  it('третий одинаковый вызов с тем же результатом не выполняется', async () => {
+    // так зациклился cohere/north-mini-code:free: раз за разом читал src/cart.js
+    const answers = [
+      toolCall('a', 'read_file', '{"path":"nope.txt"}'),
+      toolCall('b', 'read_file', '{"path": "nope.txt"}'),
+      toolCall('c', 'read_file', '{"path":"nope.txt"}'),
+      sse([{ choices: [{ delta: { content: 'Итог' }, finish_reason: 'stop' }] }]),
+    ]
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => (String(url).includes('/chat/completions') ? answers.shift()! : new Response('{}'))))
+    const events = await collect(runLLM({ model: 'x/y:free', messages: [{ role: 'user', content: 'Посмотри файл' }], tools: ['files_read'] }))
+    const results = events.filter((e) => e.t === 'tool_result') as { ok: boolean; preview: string }[]
+    expect(results).toHaveLength(3)
+    expect(results[0].preview).toMatch(/не найден/)
+    expect(results[2].preview).toMatch(/уже выполнялся 2 раз/)
+  })
+
+  it('на последнем шаге просит итог без инструментов, а без итога сообщает об ошибке', async () => {
+    const bodies: { tools?: unknown; messages: { role: string; content: string }[] }[] = []
+    let n = 0
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init?: RequestInit) => {
+        if (!String(url).includes('/chat/completions')) return new Response('{}')
+        bodies.push(JSON.parse(init!.body as string))
+        return toolCall(`c${n}`, 'read_file', `{"path":"f${n++}.txt"}`)
+      }),
+    )
+    const events = await collect(runLLM({ model: 'x/y:free', messages: [{ role: 'user', content: 'Работай' }], tools: ['files_read'], maxToolSteps: 6 }))
+    expect(bodies).toHaveLength(7)
+    expect(bodies[3].messages.at(-1)!.content).toMatch(/Осталось 3 действия/)
+    expect(bodies[6].tools).toBeUndefined()
+    expect(bodies[6].messages.at(-1)!.content).toMatch(/Лимит действий с инструментами исчерпан/)
+    expect(events.find((e) => e.t === 'error')).toMatchObject({ message: expect.stringMatching(/исчерпала лимит действий \(6\)/) })
+  })
+})

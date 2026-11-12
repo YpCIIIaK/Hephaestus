@@ -131,3 +131,13 @@ describe('форматирование', () => {
     expect(estimateTokens('привет мир')).toBeGreaterThan(estimateTokens('hello wrld'))
   })
 })
+
+describe('проверяющие с терминалом', async () => {
+  const { needsScratchCopy } = await import('@/lib/client/llm')
+  it('работают в копии проекта, если у них нет права записи', () => {
+    expect(needsScratchCopy(['files_read', 'code', 'terminal'])).toBe(true)
+    expect(needsScratchCopy(['files_read', 'files_write', 'terminal'])).toBe(false)
+    expect(needsScratchCopy(['files_read', 'code'])).toBe(false)
+    expect(needsScratchCopy(undefined)).toBe(false)
+  })
+})

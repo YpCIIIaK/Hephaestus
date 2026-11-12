@@ -6,7 +6,7 @@ import { NDJSONParser } from '../sse'
 import { modelById, resolveModelId, useCatalog } from '../stores/catalog'
 import { useSettings } from '../stores/settings'
 import { spentSince, startOfDay, startOfMonth, useUsage } from '../stores/usage'
-import type { LLMEvent, LLMRequest, LLMResult, ModelAlias, ToolTrace, Usage } from '../types'
+import type { LLMEvent, LLMRequest, LLMResult, ModelAlias, ToolsetId, ToolTrace, Usage } from '../types'
 import { uid } from '../utils'
 
 // Вызов модели из браузера: псевдонимы → реальные ID, проверка лимитов,
@@ -131,6 +131,31 @@ export const callLLM: LLMCall = async (req, opts = {}) => {
     if (!result.error || result.text || opts.signal?.aborted) break
   }
   return result
+}
+
+/**
+ * Терминал без права записи — роль проверяющего. Инструкция «не меняй файлы»
+ * не защита: через терминал модель всё равно может их изменить (так и было
+ * на настоящих моделях). Поэтому такие участники работают в копии проекта.
+ */
+export function needsScratchCopy(tools: ToolsetId[] | undefined): boolean {
+  return !!tools?.includes('terminal') && !tools.includes('files_write')
+}
+
+/** callLLM, который запускает проверяющего с терминалом в одноразовой копии проекта */
+export const callLLMSafe: LLMCall = async (req, opts = {}) => {
+  if (req.sandbox || !needsScratchCopy(req.tools)) return callLLM(req, opts)
+  let id: string
+  try {
+    ;({ id } = await api<{ id: string }>('/api/sandboxes', { method: 'POST', json: { action: 'create', label: opts.meta?.label ?? 'проверка' } }))
+  } catch (e) {
+    return { text: '', reasoning: '', tools: [], usage: emptyUsage(), model: req.model, latencyMs: 0, error: `Не удалось создать проверочную копию проекта: ${e instanceof Error ? e.message : String(e)}` }
+  }
+  try {
+    return await callLLM({ ...req, sandbox: id }, opts)
+  } finally {
+    void api(`/api/sandboxes?id=${id}`, { method: 'DELETE' }).catch(() => {})
+  }
 }
 
 export async function callTool(name: string, args: Record<string, unknown>, signal?: AbortSignal): Promise<{ ok: boolean; output: string }> {
