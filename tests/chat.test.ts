@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildChatMessages, buildTitleMessages, parseJudge, parseTitle, type Conversation } from '@/lib/engine/chat'
+import { buildChatMessages, buildJudgeMessages, buildTitleMessages, parseJudge, parseTitle, type Conversation } from '@/lib/engine/chat'
 
 const conv = (n: number): Conversation => ({
   id: 'c',
@@ -58,5 +58,14 @@ describe('название диалога', () => {
     const msgs = buildTitleMessages('Чем TCP отличается от UDP?')
     expect(msgs[1].content).toContain('не отвечай')
     expect(msgs[1].content).toContain('Чем TCP отличается от UDP?')
+  })
+})
+
+describe('судья', () => {
+  it('не должен выдумывать результаты тестов, которых не было', () => {
+    // на настоящих моделях судья написал «npm test — 3 passed», хотя никто не запускал тесты после правок
+    const sys = buildJudgeMessages('Проверь проект', [{ key: 'a', name: 'A', text: 'x' }])[0].content!
+    expect(sys).toContain('Не утверждай результатов запусков')
+    expect(sys).toContain('<изменения в файлах>')
   })
 })
