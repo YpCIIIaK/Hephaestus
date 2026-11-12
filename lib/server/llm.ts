@@ -6,6 +6,7 @@ import { getCustomEndpoint, getOllamaUrl, getOpenRouterKey } from './settings'
 import { buildTools, runTool, type ToolDefinition } from './tools'
 import { mockStream } from './mock-llm'
 import { parseTextToolCalls, partialTagLength, TEXT_TOOL_CALL_TAG } from './text-tool-calls'
+import { projectContext, withSystemBlock } from './memory'
 
 // Единый шлюз к моделям. Все провайдеры говорят на OpenAI-совместимом API
 // (OpenRouter, Ollama /v1, LM Studio, vLLM…), поэтому клиент один.
@@ -287,7 +288,7 @@ export async function* runLLM(req: LLMRequest, signal?: AbortSignal): AsyncGener
   let jsonMode = !!req.jsonMode
   const codeWork = req.tools?.some((t) => t === 'code' || t === 'terminal' || t === 'files_write')
   const maxSteps = Math.min(req.maxToolSteps ?? (codeWork ? CODE_MAX_STEPS : DEFAULT_MAX_STEPS), MAX_TOOL_STEPS)
-  const messages = withDate(req.messages)
+  const messages = withDate(withSystemBlock(req.messages, await projectContext(req.tools).catch(() => '')))
   let total: Usage = { ...ZERO_USAGE, cost: null }
   let finish = 'stop'
   let rateRetries = 0

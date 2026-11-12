@@ -1,13 +1,14 @@
 'use client'
 
-import { Columns3, Download, Gavel, MoreHorizontal, PanelLeft, Rows3, ScrollText, Trash2, X } from 'lucide-react'
+import { Columns3, Download, Eraser, FoldVertical, Gavel, MoreHorizontal, PanelLeft, Rows3, ScrollText, Trash2, X } from 'lucide-react'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Segmented } from '@/components/ui/misc'
 import { Confirm, Dialog, Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger, Sheet, Tip } from '@/components/ui/overlay'
 import { Textarea } from '@/components/ui/field'
-import { conversationToMarkdown, describeTarget, newConversation, sendMessage, stopConversation, useChatRuntime } from '@/lib/client/chat-runner'
+import { toast } from 'sonner'
+import { clearContext, compactContext, conversationToMarkdown, describeTarget, newConversation, sendMessage, stopConversation, useChatRuntime } from '@/lib/client/chat-runner'
 import { participantColor } from '@/lib/colors'
 import { targetKey, type ChatTarget, type Conversation } from '@/lib/engine/chat'
 import { useChats } from '@/lib/stores/chats'
@@ -18,6 +19,16 @@ import { ConversationList } from './conversation-list'
 import { EmptyChat } from './empty-chat'
 import { TargetPicker } from './target-picker'
 import { TurnView } from './turn-view'
+
+function ContextDivider() {
+  return (
+    <div className="flex items-center gap-3 text-xs text-faint">
+      <span className="h-px flex-1 bg-border" />
+      <Eraser className="size-3.5" /> Контекст очищен — модели не видят сообщения выше
+      <span className="h-px flex-1 bg-border" />
+    </div>
+  )
+}
 
 function TargetChip({ target, index, onRemove, removable }: { target: ChatTarget; index: number; onRemove: () => void; removable: boolean }) {
   const info = describeTarget(target)
@@ -89,7 +100,29 @@ export function ChatView() {
     update({ targets: exists ? view.targets.filter((x) => targetKey(x) !== key) : [...view.targets, t].slice(0, 8) })
   }
 
+  const compact = async () => {
+    if (!conv) return
+    const t = toast.loading('Сжимаю историю диалога…')
+    const { compacted, failed } = await compactContext(conv.id)
+    if (failed) toast.error(`Не удалось сжать историю ${failed} участн.`, { id: t })
+    else toast.success(compacted ? 'История сжата: модели продолжат по краткому резюме' : 'Сжимать пока нечего', { id: t })
+  }
+
+  const clear = () => {
+    if (!conv) return
+    clearContext(conv.id)
+    toast.success('Контекст очищен: модели не видят сообщения выше, память проекта сохраняется')
+  }
+
   const send = async (text: string, files: { name: string; content: string }[]) => {
+    // Команды как в Claude Code
+    const cmd = text.trim().toLowerCase()
+    if (!files.length && (cmd === '/clear' || cmd === '/compact')) {
+      if (!conv?.turns.length) toast('В диалоге пока нечего очищать')
+      else if (cmd === '/clear') clear()
+      else await compact()
+      return
+    }
     let id = conv?.id
     if (!id) {
       const fresh = { ...draft, id: draft.id, createdAt: Date.now(), updatedAt: Date.now() }
@@ -176,6 +209,14 @@ export function ChatView() {
                 <MenuItem onSelect={() => setChatDefaults({ autoJudge: !defaults.autoJudge })}>
                   <Gavel /> Автосудья: {defaults.autoJudge ? 'вкл' : 'выкл'}
                 </MenuItem>
+                <MenuSeparator />
+                <MenuItem disabled={running || !conv.turns.length} onSelect={() => void compact()}>
+                  <FoldVertical /> Сжать контекст · /compact
+                </MenuItem>
+                <MenuItem disabled={running || !conv.turns.length} onSelect={clear}>
+                  <Eraser /> Очистить контекст · /clear
+                </MenuItem>
+                <MenuSeparator />
                 <MenuItem onSelect={() => downloadFile(`${conv.title}.md`, conversationToMarkdown(conv), 'text/markdown')}>
                   <Download /> Экспорт в Markdown
                 </MenuItem>
@@ -204,20 +245,23 @@ export function ChatView() {
           ) : (
             <div className={cn('mx-auto space-y-8 px-3 py-6 md:px-6', view.targets.length > 1 && layout === 'columns' ? 'max-w-[1400px]' : 'max-w-3xl')}>
               {view.turns.map((t, i) => (
-                <TurnView
-                  key={t.id}
-                  convId={view.id}
-                  turn={t}
-                  targets={view.targets}
-                  layout={layout}
-                  isLast={i === view.turns.length - 1}
-                  running={running}
-                  onEdit={() => {
-                    truncateFrom(view.id, t.id)
-                    composer.current?.setText(t.user)
-                  }}
-                />
+                <Fragment key={t.id}>
+                  {i > 0 && i === view.contextFrom && <ContextDivider />}
+                  <TurnView
+                    convId={view.id}
+                    turn={t}
+                    targets={view.targets}
+                    layout={layout}
+                    isLast={i === view.turns.length - 1}
+                    running={running}
+                    onEdit={() => {
+                      truncateFrom(view.id, t.id)
+                      composer.current?.setText(t.user)
+                    }}
+                  />
+                </Fragment>
               ))}
+              {view.turns.length > 0 && view.contextFrom === view.turns.length && <ContextDivider />}
             </div>
           )}
         </div>

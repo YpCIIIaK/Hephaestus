@@ -66,7 +66,23 @@ export interface Conversation {
   interactions?: boolean
   turns: ChatTurn[]
   pinned?: boolean
+  /** Ходы до этого индекса модели не видят: контекст очищен */
+  contextFrom?: number
+  /** Сжатая история каждого участника: краткое содержание ходов до uptoTurn */
+  memory?: Record<string, ContextSummary>
 }
+
+export interface ContextSummary {
+  /** Индекс хода, до которого (не включая) история сжата */
+  uptoTurn: number
+  text: string
+  at: number
+}
+
+/** Сколько последних ходов всегда остаются дословно при автоматическом сжатии */
+export const KEEP_RECENT_TURNS = 2
+/** Сжимаем, когда история занимает больше этой доли бюджета контекста */
+export const COMPACT_THRESHOLD = 0.75
 
 export function attachmentsBlock(atts: Attachment[] | undefined): string {
   if (!atts?.length) return ''
@@ -78,46 +94,124 @@ export function userContent(turn: Pick<ChatTurn, 'user' | 'attachments'>): strin
   return files ? `${files}\n\n${turn.user}` : turn.user
 }
 
+/** Краткая запись действий с инструментами: иначе на следующем ходе модель не помнит, что читала и меняла */
+export function toolSummary(tools: ToolTrace[] | undefined): string {
+  if (!tools?.length) return ''
+  const items = tools.slice(0, 40).map((t) => {
+    let arg = ''
+    try {
+      const a = JSON.parse(t.args || '{}') as Record<string, unknown>
+      arg = String(a.path ?? a.command ?? a.query ?? a.pattern ?? a.glob ?? a.url ?? a.from ?? a.note ?? '').slice(0, 120)
+    } catch {
+      // аргументы не JSON
+    }
+    return `${t.name}${arg ? ` ${arg}` : ''}${t.ok === false ? ' (ошибка)' : ''}`
+  })
+  return `[Мои действия: ${items.join('; ')}${tools.length > 40 ? `; и ещё ${tools.length - 40}` : ''}]`
+}
+
+function replyContent(reply: ChatReply): string {
+  const actions = toolSummary(reply.tools)
+  return actions ? `${actions}\n\n${reply.text}` : reply.text
+}
+
+interface HistoryPair {
+  turn: number
+  messages: LLMMessage[]
+  tokens: number
+}
+
+/** Пары «вопрос — ответ этого участника» с хода from до uptoTurn (не включая) */
+function historyPairs(conv: Pick<Conversation, 'turns'>, key: string, from: number, uptoTurn: number): HistoryPair[] {
+  const pairs: HistoryPair[] = []
+  for (let i = from; i < uptoTurn; i++) {
+    const turn = conv.turns[i]
+    const reply = turn.replies[key]
+    // вопрос без ответа этого участника не нужен в его истории
+    if (!reply || !(reply.status === 'done' || (reply.status === 'stopped' && reply.text))) continue
+    const messages: LLMMessage[] = [
+      { role: 'user', content: userContent(turn) },
+      { role: 'assistant', content: replyContent(reply) },
+    ]
+    pairs.push({ turn: i, messages, tokens: messages.reduce((n, m) => n + estimateTokens(m.content) + 4, 0) })
+  }
+  return pairs
+}
+
+/** С какого хода начинается видимая модели история и какое резюме её предваряет */
+function contextStart(conv: Pick<Conversation, 'contextFrom' | 'memory'>, key: string): { from: number; summary?: ContextSummary } {
+  const cleared = conv.contextFrom ?? 0
+  const summary = conv.memory?.[key]
+  if (summary && summary.uptoTurn > cleared) return { from: summary.uptoTurn, summary }
+  return { from: cleared }
+}
+
 /**
- * История для конкретного участника: вопросы пользователя и только его собственные
- * ответы. Старые ходы отбрасываются, пока история не влезет в бюджет токенов.
+ * История для конкретного участника: резюме сжатой части, затем вопросы
+ * пользователя и только его собственные ответы (со сводкой действий).
+ * Если история всё равно не влезает в бюджет, старые ходы отбрасываются.
  */
 export function buildChatMessages(
-  conv: Pick<Conversation, 'turns'>,
+  conv: Pick<Conversation, 'turns' | 'contextFrom' | 'memory'>,
   key: string,
   uptoTurn: number,
   systemPrompt: string,
   maxContextTokens: number,
 ): { messages: LLMMessage[]; droppedTurns: number } {
-  const pairs: LLMMessage[][] = []
-  for (let i = 0; i < uptoTurn; i++) {
-    const turn = conv.turns[i]
-    const reply = turn.replies[key]
-    const pair: LLMMessage[] = [{ role: 'user', content: userContent(turn) }]
-    if (reply && (reply.status === 'done' || (reply.status === 'stopped' && reply.text))) pair.push({ role: 'assistant', content: reply.text })
-    else continue // вопрос без ответа этого участника не нужен в его истории
-    pairs.push(pair)
-  }
+  const { from, summary } = contextStart(conv, key)
+  const pairs = historyPairs(conv, key, from, uptoTurn)
   const current: LLMMessage = { role: 'user', content: userContent(conv.turns[uptoTurn]) }
-  const fixed = estimateTokens(systemPrompt) + estimateTokens(current.content)
+  const summaryBlock = summary ? `Краткое содержание более ранней части диалога (сжато, чтобы сэкономить контекст):\n${summary.text}` : ''
+  const fixed = estimateTokens(systemPrompt) + estimateTokens(summaryBlock) + estimateTokens(current.content)
   let budget = maxContextTokens - fixed
   const kept: LLMMessage[][] = []
   for (let i = pairs.length - 1; i >= 0; i--) {
-    const cost = pairs[i].reduce((s, m) => s + estimateTokens(m.content) + 4, 0)
-    if (cost > budget) break
-    budget -= cost
-    kept.unshift(pairs[i])
+    if (pairs[i].tokens > budget) break
+    budget -= pairs[i].tokens
+    kept.unshift(pairs[i].messages)
   }
   const dropped = pairs.length - kept.length
-  const sys = systemPrompt.trim()
-    ? systemPrompt + (dropped ? `\n\n(Ранние ${dropped} сообщ. диалога опущены из-за лимита контекста.)` : '')
-    : dropped
-      ? `(Ранние ${dropped} сообщ. диалога опущены из-за лимита контекста.)`
-      : ''
+  const sys = [systemPrompt.trim(), summaryBlock, dropped ? `(Ранние ${dropped} сообщ. диалога опущены из-за лимита контекста.)` : ''].filter(Boolean).join('\n\n')
   return {
     messages: [...(sys ? [{ role: 'system' as const, content: sys }] : []), ...kept.flat(), current],
     droppedTurns: dropped,
   }
+}
+
+/**
+ * Нужно ли сжать историю участника перед ходом uptoTurn. Возвращает диапазон
+ * ходов для сжатия: всё, кроме последних KEEP_RECENT_TURNS (force — вообще всё).
+ */
+export function compactionPlan(
+  conv: Pick<Conversation, 'turns' | 'contextFrom' | 'memory'>,
+  key: string,
+  uptoTurn: number,
+  maxContextTokens: number,
+  force = false,
+): { from: number; to: number; text: string; previous?: string } | null {
+  const { from, summary } = contextStart(conv, key)
+  const pairs = historyPairs(conv, key, from, uptoTurn)
+  const total = pairs.reduce((n, p) => n + p.tokens, 0)
+  if (!force && total < maxContextTokens * COMPACT_THRESHOLD) return null
+  const toCompact = force ? pairs : pairs.slice(0, Math.max(0, pairs.length - KEEP_RECENT_TURNS))
+  if (!toCompact.length) return null
+  const to = force ? uptoTurn : toCompact[toCompact.length - 1].turn + 1
+  const text = toCompact.map((p) => p.messages.map((m) => `${m.role === 'user' ? 'Пользователь' : 'Ассистент'}: ${m.content}`).join('\n\n')).join('\n\n---\n\n')
+  return { from, to, text, previous: summary?.text }
+}
+
+export function buildCompactionMessages(plan: { text: string; previous?: string }): LLMMessage[] {
+  return [
+    {
+      role: 'system',
+      content:
+        'Ты сжимаешь историю рабочего диалога, чтобы её можно было продолжить с чистым контекстом. Сохрани всё, что нужно для продолжения: цель и задачи пользователя, принятые решения и договорённости, какие файлы изучены и изменены (с путями), какие команды запускались и с каким итогом, найденные проблемы, что осталось сделать и открытые вопросы. Убери повторы, вежливость и подробности, которые больше не нужны. Пиши кратко, списками, на языке диалога. Не добавляй ничего от себя.',
+    },
+    {
+      role: 'user',
+      content: `${plan.previous ? `Резюме ещё более ранней части:\n${plan.previous}\n\n` : ''}Часть диалога, которую нужно сжать:\n\n${plan.text.slice(-60_000)}\n\nНапиши сжатое резюме.`,
+    },
+  ]
 }
 
 // ─── Судья: сравнение ответов ────────────────────────────────────────────

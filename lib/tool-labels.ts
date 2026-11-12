@@ -9,6 +9,7 @@ export const TOOL_LABELS: Record<string, string> = {
   edit_file: 'Правка файла',
   delete_file: 'Удаление',
   move_file: 'Перемещение',
+  remember: 'Память проекта',
   search_code: 'Поиск в коде',
   find_files: 'Поиск файлов',
   codebase_search: 'Поиск по смыслу',

@@ -4,6 +4,7 @@ import { getSkill, listSkills, skillsCatalogText } from './skills'
 import { webSearch } from './search'
 import { fetchPage, formatSearchResults } from './web'
 import { codebaseSearch, findFiles, formatCodeHits, formatGrepHits, searchCode } from './code-search'
+import { remember } from './memory'
 import { getTerminalSettings } from './settings'
 import { formatCommandResult, listBackground, readBackground, runCommand, startBackground, stopBackground } from './terminal'
 import {
@@ -65,6 +66,12 @@ const TOOLSETS: Record<ToolsetId, ToolDefinition[]> = {
     ),
     def('move_file', 'Переместить или переименовать файл или папку.', { from: str('Откуда'), to: str('Куда') }, ['from', 'to']),
     def('delete_file', 'Удалить файл или папку.', { path: str('Путь') }, ['path']),
+    def(
+      'remember',
+      'Сохранить важный факт о проекте в память проекта (HEPHAESTUS.md): команды сборки и тестов, договорённости, решения пользователя. Память видят все модели в следующих запросах.',
+      { note: str('Короткая заметка, одна мысль') },
+      ['note'],
+    ),
   ],
   code: [
     def(
@@ -180,6 +187,8 @@ export async function runTool(name: string, rawArgs: string | Record<string, unk
         const r = await editWorkspaceFile(s('path'), s('old_text'), s('new_text'), { replaceAll: args.replace_all === true })
         return { ok: true, output: `Изменён ${r.path}${r.replacements > 1 ? ` (замен: ${r.replacements})` : ''}` }
       }
+      case 'remember':
+        return { ok: true, output: await remember(s('note')) }
       case 'move_file': {
         const r = await moveWorkspacePath(s('from'), s('to'))
         return { ok: true, output: `Перемещено: ${r.from} → ${r.to}` }

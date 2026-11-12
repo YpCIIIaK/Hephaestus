@@ -1,7 +1,7 @@
 'use client'
 
 import { create } from 'zustand'
-import { buildChatMessages, buildJudgeMessages, buildTitleMessages, fallbackTitle, parseJudge, parseTitle, targetKey, userContent, type ChatReply, type ChatTarget, type ChatTurn, type Conversation } from '../engine/chat'
+import { buildChatMessages, buildCompactionMessages, buildJudgeMessages, buildTitleMessages, compactionPlan, fallbackTitle, parseJudge, parseTitle, targetKey, userContent, type ChatReply, type ChatTarget, type ChatTurn, type Conversation } from '../engine/chat'
 import { runPipeline } from '../engine/pipeline'
 import { shortModelName } from '../models'
 import { getAgent } from '../stores/agents'
@@ -158,7 +158,16 @@ async function runTarget(conv: Conversation, turnIndex: number, target: ChatTarg
     maxTokens = agent.maxTokens
   }
 
-  const { messages } = buildChatMessages(useChats.getState().conversations.find((c) => c.id === conv.id) ?? conv, key, turnIndex, system, settings.chat.maxContextTokens)
+  // История не влезает в контекст — сжимаем старую часть в резюме, а не выбрасываем молча
+  const plan = compactionPlan(getConv(conv.id) ?? conv, key, turnIndex, settings.chat.maxContextTokens)
+  if (plan) {
+    patchReply(conv.id, turn.id, key, { notices: ['Сжимаю раннюю историю диалога…'] })
+    const ok = await compactHistory(conv.id, key, model, plan, signal)
+    patchReply(conv.id, turn.id, key, { notices: [ok ? 'Ранняя история диалога сжата в резюме' : 'Не удалось сжать историю — ранние сообщения опущены'] })
+    if (signal.aborted) return
+  }
+
+  const { messages } = buildChatMessages(getConv(conv.id) ?? conv, key, turnIndex, system, settings.chat.maxContextTokens)
   const received = conv.interactions ? conv.targets.filter((t) => targetKey(t) !== key).map((t) => ({ name: describeTarget(t).name, text: getConv(conv.id)?.turns[turnIndex]?.replies[targetKey(t)]?.text ?? '' })).filter((item) => item.text) : []
   if (received.length) {
     messages.unshift({ role: 'system', content: `Ответы других участников этого обсуждения. Учитывай их и явно называй участника, если дополняешь или оспариваешь его вывод:\n\n${received.map((item) => `${item.name}: ${item.text}`).join('\n\n')}` })
@@ -206,6 +215,54 @@ async function runTarget(conv: Conversation, turnIndex: number, target: ChatTarg
     latencyMs: res.latencyMs,
     model: res.model,
   })
+}
+
+/** Сжимает историю участника и запоминает резюме; true — если получилось */
+async function compactHistory(convId: string, key: string, model: string, plan: NonNullable<ReturnType<typeof compactionPlan>>, signal?: AbortSignal): Promise<boolean> {
+  const res = await callLLM(
+    { model, messages: buildCompactionMessages(plan), temperature: 0.2, maxTokens: 2000 },
+    { signal, meta: { source: 'system', label: 'Сжатие контекста' } },
+  )
+  if (res.error || res.aborted || !res.text.trim()) return false
+  const conv = getConv(convId)
+  if (!conv) return false
+  useChats.getState().patch(convId, { memory: { ...conv.memory, [key]: { uptoTurn: plan.to, text: res.text.trim(), at: Date.now() } } })
+  return true
+}
+
+/** «Очистить контекст»: история остаётся на экране, но модели начинают с чистого листа */
+export function clearContext(convId: string) {
+  const conv = getConv(convId)
+  if (!conv) return
+  useChats.getState().patch(convId, { contextFrom: conv.turns.length, memory: {} })
+}
+
+/** «Сжать контекст»: вся видимая моделям история каждого участника сжимается в резюме */
+export async function compactContext(convId: string): Promise<{ compacted: number; failed: number }> {
+  const conv = getConv(convId)
+  if (!conv) return { compacted: 0, failed: 0 }
+  let compacted = 0
+  let failed = 0
+  const ac = track(convId)
+  useChatRuntime.getState().begin(convId)
+  try {
+    await Promise.all(
+      conv.targets
+        .filter((t) => t.kind !== 'pipeline')
+        .map(async (t) => {
+          const key = targetKey(t)
+          const plan = compactionPlan(getConv(convId) ?? conv, key, conv.turns.length, Infinity, true)
+          if (!plan) return
+          const model = t.kind === 'agent' ? (getAgent(t.id)?.model ?? '@default') : t.id
+          if (await compactHistory(convId, key, model, plan, ac.signal)) compacted++
+          else failed++
+        }),
+    )
+  } finally {
+    useChatRuntime.getState().end(convId)
+    untrack(convId, ac)
+  }
+  return { compacted, failed }
 }
 
 function getConv(id: string) {

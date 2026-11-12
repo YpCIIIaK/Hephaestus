@@ -47,7 +47,10 @@ export const useChats = create<ChatsStore>()(
         set((s) => ({
           conversations: mapConv(s.conversations, id, (c) => {
             const i = c.turns.findIndex((t) => t.id === turnId)
-            return i === -1 ? c : touch({ ...c, turns: c.turns.slice(0, i) })
+            if (i === -1) return c
+            // Резюме и точка очистки, которые захватывали удалённые ходы, больше не верны
+            const memory = Object.fromEntries(Object.entries(c.memory ?? {}).filter(([, m]) => m.uptoTurn <= i))
+            return touch({ ...c, turns: c.turns.slice(0, i), memory, contextFrom: c.contextFrom != null && c.contextFrom > i ? i : c.contextFrom })
           }),
         })),
     }),
