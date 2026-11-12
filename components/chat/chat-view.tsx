@@ -1,20 +1,24 @@
 'use client'
 
-import { Columns3, Download, Eraser, FoldVertical, Gavel, GitCompareArrows, MoreHorizontal, PanelLeft, Rows3, ScrollText, Trash2, X } from 'lucide-react'
+import { ChevronDown, Columns3, Download, Eraser, FoldVertical, Gavel, GitCompareArrows, Minimize2, MoreHorizontal, PanelLeft, Rows3, ScrollText, Trash2, X } from 'lucide-react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Segmented } from '@/components/ui/misc'
-import { Confirm, Dialog, Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger, Sheet, Tip } from '@/components/ui/overlay'
+import { Confirm, Dialog, Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger, Popover, PopoverContent, PopoverTrigger, Sheet, Tip } from '@/components/ui/overlay'
+import { ModelList } from '@/components/model-picker'
 import { Textarea } from '@/components/ui/field'
 import { toast } from 'sonner'
 import { clearContext, compactContext, conversationToMarkdown, describeTarget, newConversation, sendMessage, stopConversation, useChatRuntime } from '@/lib/client/chat-runner'
 import { participantColor } from '@/lib/colors'
-import { targetKey, type ChatTarget, type Conversation } from '@/lib/engine/chat'
+import { replaceTarget, resizeTargets, targetKey, type ChatTarget, type Conversation } from '@/lib/engine/chat'
+import { newestFreeModels } from '@/lib/models'
+import { resolveModelId, usableModels, useCatalog } from '@/lib/stores/catalog'
 import { useChats } from '@/lib/stores/chats'
 import { useSettings } from '@/lib/stores/settings'
 import { cn, downloadFile } from '@/lib/utils'
 import { Composer, type ComposerHandle } from './composer'
+import { MultiTaskComposer } from './multi-task-composer'
 import { ConversationList } from './conversation-list'
 import { EmptyChat } from './empty-chat'
 import { TargetPicker } from './target-picker'
@@ -30,13 +34,35 @@ function ContextDivider() {
   )
 }
 
-function TargetChip({ target, index, onRemove, removable }: { target: ChatTarget; index: number; onRemove: () => void; removable: boolean }) {
+function TargetChip({ target, index, onRemove, removable, onReplace }: { target: ChatTarget; index: number; onRemove: () => void; removable: boolean; onReplace: (id: string) => void }) {
   const info = describeTarget(target)
+  const [open, setOpen] = useState(false)
   return (
     <span className="inline-flex h-7 max-w-56 shrink-0 items-center gap-1.5 rounded-lg border border-border bg-surface pl-2 pr-1 text-xs font-medium" title={info.subtitle}>
       <span className="size-2 shrink-0 rounded-full" style={{ background: participantColor(index) }} />
       {info.emoji && <span>{info.emoji}</span>}
-      <span className="truncate">{info.name}</span>
+      {target.kind === 'model' ? (
+        // Модель можно сменить прямо здесь — новая продолжит историю диалога
+        <Popover open={open} onOpenChange={setOpen}>
+          <PopoverTrigger asChild>
+            <button className="inline-flex min-w-0 items-center gap-1 hover:text-accent" aria-label={`Сменить модель ${info.name}`}>
+              <span className="truncate">{info.name}</span>
+              <ChevronDown className="size-3 shrink-0 text-faint" />
+            </button>
+          </PopoverTrigger>
+          <PopoverContent align="start" className="w-[min(440px,calc(100vw-2rem))] p-0">
+            <ModelList
+              value={[target.id]}
+              onPick={(id) => {
+                setOpen(false)
+                onReplace(id)
+              }}
+            />
+          </PopoverContent>
+        </Popover>
+      ) : (
+        <span className="truncate">{info.name}</span>
+      )}
       {removable && (
         <button onClick={onRemove} className="rounded p-0.5 text-faint hover:bg-surface-2 hover:text-fg" aria-label={`Убрать ${info.name}`}>
           <X className="size-3" />
@@ -62,6 +88,7 @@ export function ChatView() {
   const stickToBottom = useRef(true)
   const [listOpen, setListOpen] = useState(false)
   const [layout, setLayout] = useState<'columns' | 'stack'>('columns')
+  const [focus, setFocus] = useState<string | null>(null)
   const [systemOpen, setSystemOpen] = useState(false)
   const [deleting, setDeleting] = useState(false)
   // Черновик: диалог ещё не создан, но участники и инструменты уже выбраны
@@ -69,6 +96,9 @@ export function ChatView() {
 
   const activeId = params.get('c')
   const conv = conversations.find((c) => c.id === activeId) ?? null
+  const convId = conv?.id
+  const separate = !!(conv ?? draft).separateTasks && (conv ?? draft).targets.length > 1
+  useEffect(() => setFocus(null), [convId])
   const view = conv ?? draft
   const running = conv ? (runningCount[conv.id] ?? 0) > 0 : false
 
@@ -100,6 +130,22 @@ export function ChatView() {
     update({ targets: exists ? view.targets.filter((x) => targetKey(x) !== key) : [...view.targets, t].slice(0, 8) })
   }
 
+  const replace = (from: ChatTarget, id: string) => {
+    const patch = replaceTarget(view, from, { kind: 'model', id })
+    if (!patch) return toast('Эта модель уже участвует в диалоге')
+    update(patch)
+    if (focus === targetKey(from)) setFocus(null)
+  }
+
+  // «Сколько моделей»: недостающие — роли, избранные, затем свежие бесплатные модели
+  const catalog = useCatalog((s) => s.models)
+  const unavailable = useCatalog((s) => s.unavailable)
+  const favorites = useSettings((s) => s.favorites)
+  const resize = (n: number) => {
+    const free = newestFreeModels(usableModels(catalog, unavailable)).filter((m) => m.supportsTools).map((m) => m.id)
+    update({ targets: resizeTargets(view.targets, n, ['@smart', '@default', '@fast', ...favorites, ...free], resolveModelId) })
+  }
+
   const compact = async () => {
     if (!conv) return
     const t = toast.loading('Сжимаю историю диалога…')
@@ -114,6 +160,21 @@ export function ChatView() {
     toast.success('Контекст очищен: модели не видят сообщения выше, память проекта сохраняется')
   }
 
+  const ensureConv = () => {
+    if (conv) return conv.id
+    const fresh = { ...draft, id: draft.id, createdAt: Date.now(), updatedAt: Date.now() }
+    createConv(fresh)
+    setDraft(newConversation())
+    router.replace(`/chat?c=${fresh.id}`)
+    return fresh.id
+  }
+
+  const sendTasks = async (tasks: Record<string, string>) => {
+    const id = ensureConv()
+    stickToBottom.current = true
+    await sendMessage(id, '', [], tasks)
+  }
+
   const send = async (text: string, files: { name: string; content: string }[]) => {
     // Команды как в Claude Code
     const cmd = text.trim().toLowerCase()
@@ -123,14 +184,7 @@ export function ChatView() {
       else await compact()
       return
     }
-    let id = conv?.id
-    if (!id) {
-      const fresh = { ...draft, id: draft.id, createdAt: Date.now(), updatedAt: Date.now() }
-      createConv(fresh)
-      id = fresh.id
-      setDraft(newConversation())
-      router.replace(`/chat?c=${id}`)
-    }
+    const id = ensureConv()
     stickToBottom.current = true
     await sendMessage(id, text, files)
   }
@@ -175,14 +229,23 @@ export function ChatView() {
           </Tip>
           <div className="-my-1 flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto py-1 md:flex-wrap md:overflow-visible">
             {view.targets.map((t, i) => (
-              <TargetChip key={targetKey(t)} target={t} index={i} removable={view.targets.length > 1} onRemove={() => toggleTarget(t)} />
+              <TargetChip key={targetKey(t)} target={t} index={i} removable={view.targets.length > 1} onRemove={() => toggleTarget(t)} onReplace={(id) => replace(t, id)} />
             ))}
             <TargetPicker value={view.targets} onToggle={toggleTarget} />
           </div>
+          <Tip content="Сколько моделей отвечают — экран делится на колонки">
+            <span className="hidden sm:inline-flex">
+              <Segmented
+                size="sm"
+                value={String(Math.min(view.targets.length, 4)) as '1' | '2' | '3' | '4'}
+                onChange={(v) => resize(Number(v))}
+                options={(['1', '2', '3', '4'] as const).map((v) => ({ value: v, label: v, title: `${v} ${v === '1' ? 'модель' : 'модели'}` }))}
+              />
+            </span>
+          </Tip>
           {view.targets.length > 1 && <button type="button" disabled={running} onClick={() => update({ interactions: !view.interactions })} className={cn('rounded-lg border px-2.5 py-1.5 text-xs disabled:opacity-50', view.interactions ? 'border-accent bg-accent-soft text-accent' : 'border-border text-muted hover:text-fg')} title="Модели отвечают по очереди и видят ответы друг друга. Запуск дольше и расходует больше токенов.">Общение {view.interactions ? 'вкл' : 'выкл'}</button>}
           {view.targets.length > 1 && (
             <Segmented
-              className="hidden md:inline-flex"
               size="sm"
               value={layout}
               onChange={setLayout}
@@ -191,6 +254,11 @@ export function ChatView() {
                 { value: 'stack', label: <Rows3 />, title: 'Лентой' },
               ]}
             />
+          )}
+          {focus && (
+            <button onClick={() => setFocus(null)} className="inline-flex items-center gap-1.5 rounded-lg border border-accent bg-accent-soft px-2.5 py-1.5 text-xs text-accent">
+              <Minimize2 className="size-3.5" /> Показать всех
+            </button>
           )}
           <Tip content={view.systemPrompt ? 'Системный промпт задан' : 'Системный промпт'}>
             <button onClick={() => setSystemOpen(true)} className={cn('flex size-8 items-center justify-center rounded-lg hover:bg-surface-2', view.systemPrompt ? 'text-accent' : 'text-muted hover:text-fg')} aria-label="Системный промпт">
@@ -261,6 +329,8 @@ export function ChatView() {
                       truncateFrom(view.id, t.id)
                       composer.current?.setText(t.user)
                     }}
+                    focus={focus}
+                    onFocus={setFocus}
                   />
                 </Fragment>
               ))}
@@ -270,16 +340,33 @@ export function ChatView() {
         </div>
 
         <div className="shrink-0 px-3 pb-3 md:px-6 md:pb-5">
-          <div className="mx-auto max-w-3xl">
-            <Composer
-              ref={composer}
-              running={running}
-              onStop={() => conv && stopConversation(conv.id)}
-              onSend={send}
-              tools={view.tools}
-              onToolsChange={(tools) => update({ tools })}
-              placeholder={view.targets.length > 1 ? `Вопрос для ${view.targets.length} участников…` : undefined}
-            />
+          <div className={cn('mx-auto', separate ? 'max-w-[1400px]' : 'max-w-3xl')}>
+            {view.targets.length > 1 && (
+              <div className="mb-2 flex justify-center">
+                <Segmented
+                  size="sm"
+                  value={separate ? 'many' : 'one'}
+                  onChange={(v) => update({ separateTasks: v === 'many' })}
+                  options={[
+                    { value: 'one', label: 'Одна задача', title: 'Одно сообщение — отвечают все участники' },
+                    { value: 'many', label: 'Разные задачи', title: 'У каждого участника своя задача; можно запустить всех или одного' },
+                  ]}
+                />
+              </div>
+            )}
+            {separate ? (
+              <MultiTaskComposer targets={view.targets} running={running} onSend={sendTasks} onStop={() => conv && stopConversation(conv.id)} />
+            ) : (
+              <Composer
+                ref={composer}
+                running={running}
+                onStop={() => conv && stopConversation(conv.id)}
+                onSend={send}
+                tools={view.tools}
+                onToolsChange={(tools) => update({ tools })}
+                placeholder={view.targets.length > 1 ? `Вопрос для ${view.targets.length} участников…` : undefined}
+              />
+            )}
           </div>
         </div>
       </section>

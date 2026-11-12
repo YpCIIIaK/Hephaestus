@@ -1,6 +1,6 @@
 'use client'
 
-import { AlertTriangle, Brain, Check, ChevronDown, Crown, FileText, GitCompareArrows, Gavel, Pencil, RotateCcw, Square, ThumbsDown, ThumbsUp, Trash2 } from 'lucide-react'
+import { AlertTriangle, Brain, Check, ChevronDown, Maximize2, Minimize2, Crown, FileText, GitCompareArrows, Gavel, Pencil, RotateCcw, Square, ThumbsDown, ThumbsUp, Trash2 } from 'lucide-react'
 import { memo, useState } from 'react'
 import { CopyButton, Markdown } from '@/components/markdown'
 import { ToolTraceList } from '@/components/tool-chips'
@@ -133,6 +133,9 @@ const ReplyCard = memo(function ReplyCard({
   color,
   best,
   card,
+  task,
+  focused,
+  onFocus,
 }: {
   convId: string
   turnId: string
@@ -141,6 +144,11 @@ const ReplyCard = memo(function ReplyCard({
   color: string
   best: boolean
   card: boolean
+  /** Отдельная задача участника (режим «разные задачи») */
+  task?: string
+  focused?: boolean
+  /** Развернуть ответ участника на всю ширину или вернуть все */
+  onFocus?: () => void
 }) {
   const info = describeTarget(target)
   const showReasoning = useSettings((s) => s.chat.showReasoning)
@@ -162,6 +170,13 @@ const ReplyCard = memo(function ReplyCard({
             </Badge>
           )}
           <span className="ml-auto">{streaming && <Spinner className="size-3.5 text-accent" />}</span>
+          {onFocus && (
+            <Tip content={focused ? 'Показать всех участников' : 'Развернуть — только этот участник'}>
+              <button onClick={onFocus} className="shrink-0 rounded-md p-1 text-faint hover:bg-surface-2 hover:text-fg" aria-label={focused ? 'Показать всех' : 'Развернуть'}>
+                {focused ? <Minimize2 className="size-3.5" /> : <Maximize2 className="size-3.5" />}
+              </button>
+            </Tip>
+          )}
         </div>
       )}
       <div className={cn('flex flex-col gap-3', card ? 'px-4 py-3' : 'py-1')}>
@@ -182,6 +197,7 @@ const ReplyCard = memo(function ReplyCard({
             {reply.progress.current && <span className="truncate">· {reply.progress.current}</span>}
           </div>
         )}
+        {task && card && <div className="line-clamp-3 rounded-lg bg-surface-2/70 px-2.5 py-1.5 text-xs text-muted" title={task}><b className="text-fg">Задача:</b> {task}</div>}
         {showReasoning && reply.reasoning && <Reasoning text={reply.reasoning} streaming={streaming && !reply.text} />}
         {!!reply.received?.length && <details className="rounded-lg border border-border p-2 text-xs"><summary className="cursor-pointer font-medium">Видел ответы других участников · {reply.received.length}</summary><div className="mt-2 space-y-2">{reply.received.map((item, i) => <div key={i}><b>{item.name}</b><div className="max-h-48 overflow-y-auto whitespace-pre-wrap break-words text-muted">{item.text}</div></div>)}</div></details>}
         {!!reply.tools?.length && <ToolTraceList tools={reply.tools} />}
@@ -300,6 +316,8 @@ export function TurnView({
   isLast,
   running,
   onEdit,
+  focus,
+  onFocus,
 }: {
   convId: string
   turn: ChatTurn
@@ -308,11 +326,16 @@ export function TurnView({
   isLast: boolean
   running: boolean
   onEdit: () => void
+  /** Развёрнутый участник: показываются только его ответы */
+  focus?: string | null
+  onFocus?: (key: string | null) => void
 }) {
   // Показываем ответы и тех участников, которых позже убрали из диалога
   const keys = Object.keys(turn.replies)
   const allTargets: ChatTarget[] = [...targets.filter((t) => keys.includes(targetKey(t))), ...keys.filter((k) => !targets.some((t) => targetKey(t) === k)).map((k) => ({ kind: k.split(':')[0] as ChatTarget['kind'], id: k.slice(k.indexOf(':') + 1) }))]
   const multi = allTargets.length > 1
+  const shown = focus && keys.includes(focus) ? allTargets.filter((t) => targetKey(t) === focus) : allTargets
+  const nameOf = (key: string) => describeTarget(allTargets.find((t) => targetKey(t) === key) ?? { kind: 'model', id: key }).name
   const doneCount = Object.values(turn.replies).filter((r) => r.status === 'done' && r.text).length
   const anyStreaming = Object.values(turn.replies).some((r) => r.status === 'streaming')
 
@@ -329,7 +352,18 @@ export function TurnView({
               ))}
             </div>
           )}
-          <div className="rounded-2xl rounded-br-md bg-surface-3 px-4 py-2.5 text-[14.5px] leading-relaxed whitespace-pre-wrap break-words">{turn.user}</div>
+          {turn.tasks ? (
+            <div className="space-y-1.5 rounded-2xl rounded-br-md bg-surface-3 px-4 py-2.5 text-[14px] leading-relaxed">
+              <div className="text-[11px] font-semibold uppercase tracking-wider text-faint">Разные задачи · {Object.keys(turn.tasks).length}</div>
+              {Object.entries(turn.tasks).map(([k, task]) => (
+                <div key={k} className="whitespace-pre-wrap break-words">
+                  <b>{nameOf(k)}:</b> {task}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="rounded-2xl rounded-br-md bg-surface-3 px-4 py-2.5 text-[14.5px] leading-relaxed whitespace-pre-wrap break-words">{turn.user}</div>
+          )}
           {isLast && !running && (
             <div className="flex justify-end opacity-0 transition-opacity group-hover/user:opacity-100">
               <button onClick={onEdit} className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] text-muted hover:bg-surface-2 hover:text-fg">
@@ -343,15 +377,29 @@ export function TurnView({
       <div
         className={cn(
           multi && layout === 'columns' ? 'grid gap-3' : 'flex flex-col gap-3',
-          multi && layout === 'columns' && (allTargets.length === 2 ? 'md:grid-cols-2' : allTargets.length >= 3 ? 'md:grid-cols-2 xl:grid-cols-3' : ''),
+          multi && layout === 'columns' && (shown.length === 2 ? 'md:grid-cols-2' : shown.length === 4 ? 'md:grid-cols-2 xl:grid-cols-4' : shown.length >= 3 ? 'md:grid-cols-2 xl:grid-cols-3' : ''),
         )}
       >
-        {allTargets.map((t) => {
+        {shown.map((t) => {
           const key = targetKey(t)
           const reply = turn.replies[key]
           if (!reply) return null
           const idx = targets.findIndex((x) => targetKey(x) === key)
-          return <ReplyCard key={key} convId={convId} turnId={turn.id} target={t} reply={reply} color={participantColor(idx === -1 ? 7 : idx)} best={turn.judge?.bestKey === key} card={multi} />
+          return (
+            <ReplyCard
+              key={key}
+              convId={convId}
+              turnId={turn.id}
+              target={t}
+              reply={reply}
+              color={participantColor(idx === -1 ? 7 : idx)}
+              best={turn.judge?.bestKey === key}
+              card={multi}
+              task={turn.tasks?.[key]}
+              focused={focus === key}
+              onFocus={multi && onFocus ? () => onFocus(focus === key ? null : key) : undefined}
+            />
+          )
         })}
       </div>
 
@@ -359,6 +407,7 @@ export function TurnView({
         <JudgeCard judge={turn.judge} targets={allTargets} convId={convId} turnId={turn.id} />
       ) : (
         multi &&
+        !turn.tasks &&
         doneCount >= 2 &&
         !anyStreaming && (
           <div className="flex justify-center">

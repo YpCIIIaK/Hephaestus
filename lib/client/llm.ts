@@ -3,7 +3,7 @@
 import type { LLMCall, LLMCallOptions } from '../engine/llm'
 import { ALIAS_LABELS, isAlias, isFreeModel, newestFreeModels, providerOf } from '../models'
 import { NDJSONParser } from '../sse'
-import { modelById, resolveModelId, useCatalog } from '../stores/catalog'
+import { modelById, resolveModelId, usableModels, useCatalog } from '../stores/catalog'
 import { useSettings } from '../stores/settings'
 import { spentSince, startOfDay, startOfMonth, useUsage } from '../stores/usage'
 import type { LLMEvent, LLMRequest, LLMResult, ModelAlias, ToolsetId, ToolTrace, Usage } from '../types'
@@ -120,14 +120,30 @@ const callLLMOnce: LLMCall = async (req: LLMRequest, opts: LLMCallOptions = {}):
 }
 
 /** When free-only mode is enabled, recover from transient provider failures on another free model. */
+/** Модель недоступна приложению совсем (например, «only available on agentic harnesses»), а не временно */
+export function isModelUnavailable(error: string): boolean {
+  return /Ошибка (403|404)\b|only available on agentic|No endpoints found|model .*not (found|available)/i.test(error)
+}
+
+/** Недоступную модель запоминаем, чтобы автовыбор ролей её больше не брал */
+function noteUnavailable(result: LLMResult) {
+  if (result.error && isModelUnavailable(result.error) && providerOf(result.model) === 'openrouter') {
+    useCatalog.getState().markUnavailable(result.model, result.error.slice(0, 200))
+  }
+}
+
 export const callLLM: LLMCall = async (req, opts = {}) => {
   const first = await callLLMOnce(req, opts)
-  if (!useSettings.getState().freeOnly || !first.error || first.text || opts.signal?.aborted || !/429|лимит запросов|перегруз|overload|rate limit|временно недоступ|503/i.test(first.error)) return first
-  const candidates = newestFreeModels(useCatalog.getState().models).filter((m) => m.id !== first.model && (!req.tools?.length || m.supportsTools)).slice(0, 2)
+  noteUnavailable(first)
+  const retryable = first.error && (/429|лимит запросов|перегруз|overload|rate limit|временно недоступ|503/i.test(first.error) || isModelUnavailable(first.error))
+  if (!useSettings.getState().freeOnly || !retryable || first.text || opts.signal?.aborted) return first
+  const { models, unavailable } = useCatalog.getState()
+  const candidates = newestFreeModels(usableModels(models, unavailable)).filter((m) => m.id !== first.model && (!req.tools?.length || m.supportsTools)).slice(0, 2)
   let result = first
   for (const candidate of candidates) {
     opts.onEvent?.({ t: 'notice', v: `Модель ${result.model} недоступна. Пробуем бесплатную ${candidate.id}` })
     result = await callLLMOnce({ ...req, model: candidate.id }, opts)
+    noteUnavailable(result)
     if (!result.error || result.text || opts.signal?.aborted) break
   }
   return result

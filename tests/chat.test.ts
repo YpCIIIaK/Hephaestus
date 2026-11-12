@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildChatMessages, buildJudgeMessages, buildTitleMessages, parseJudge, parseTitle, type Conversation } from '@/lib/engine/chat'
+import { buildChatMessages, buildJudgeMessages, buildTitleMessages, keyLineage, parseJudge, parseTitle, replaceTarget, resizeTargets, type Conversation } from '@/lib/engine/chat'
 
 const conv = (n: number): Conversation => ({
   id: 'c',
@@ -67,5 +67,55 @@ describe('судья', () => {
     const sys = buildJudgeMessages('Проверь проект', [{ key: 'a', name: 'A', text: 'x' }])[0].content!
     expect(sys).toContain('Не утверждай результатов запусков')
     expect(sys).toContain('<изменения в файлах>')
+  })
+})
+
+describe('участники чата', () => {
+  const turn = (i: number, replies: Record<string, string>, tasks?: Record<string, string>) => ({
+    id: `t${i}`,
+    user: tasks ? Object.values(tasks)[0] : `вопрос ${i}`,
+    tasks,
+    createdAt: i,
+    replies: Object.fromEntries(Object.entries(replies).map(([k, text]) => [k, { status: 'done' as const, text, startedAt: i }])),
+  })
+  const conv = (over: Partial<Conversation>): Conversation => ({ id: 'c', title: '', createdAt: 0, updatedAt: 0, targets: [], systemPrompt: '', tools: [], turns: [], ...over })
+  const texts = (c: Conversation, key: string, upto: number) => buildChatMessages(c, key, upto, '', 100_000).messages.map((m) => m.content).join('\n')
+
+  it('сменённая модель продолжает историю предыдущей, а не начинает с нуля', () => {
+    const c = conv({
+      targets: [{ kind: 'model', id: 'a/one' }],
+      memory: { 'model:a/one': { uptoTurn: 0, text: 'резюме', at: 1 } },
+      turns: [turn(0, { 'model:a/one': 'ответ первой модели' }), turn(1, {})],
+    })
+    const patch = replaceTarget(c, { kind: 'model', id: 'a/one' }, { kind: 'model', id: 'b/two' })!
+    expect(patch.targets).toEqual([{ kind: 'model', id: 'b/two' }])
+    expect(patch.memory).toEqual({ 'model:b/two': { uptoTurn: 0, text: 'резюме', at: 1 } })
+    const next = { ...c, ...patch }
+    expect(texts(next, 'model:b/two', 1)).toContain('ответ первой модели')
+    // и дальше по цепочке: третья модель видит историю обеих
+    const third = { ...next, ...replaceTarget(next, { kind: 'model', id: 'b/two' }, { kind: 'model', id: 'c/three' })! }
+    expect(keyLineage(third, 'model:c/three')).toEqual(['model:c/three', 'model:b/two', 'model:a/one'])
+    // вернуться к первой модели можно — без зацикливания цепочки
+    const back = { ...third, ...replaceTarget(third, { kind: 'model', id: 'c/three' }, { kind: 'model', id: 'a/one' })! }
+    expect(keyLineage(back, 'model:a/one')).toEqual(['model:a/one'])
+    // уже участвующую модель второй раз не добавить
+    expect(replaceTarget(conv({ targets: [{ kind: 'model', id: 'x' }, { kind: 'model', id: 'y' }] }), { kind: 'model', id: 'x' }, { kind: 'model', id: 'y' })).toBeNull()
+  })
+
+  it('число моделей: добавляет недостающие без дублей одной и той же модели и убирает лишние', () => {
+    const resolve = (id: string) => ({ '@smart': 'n/ultra', '@default': 'n/super', '@fast': 'n/super' })[id] ?? id
+    const one = [{ kind: 'model' as const, id: '@smart' }]
+    expect(resizeTargets(one, 3, ['@smart', '@default', '@fast', 'g/gemma'], resolve).map((t) => t.id)).toEqual(['@smart', '@default', 'g/gemma'])
+    expect(resizeTargets([...one, { kind: 'agent', id: 'coder' }, { kind: 'model', id: 'x' }], 1, [], resolve)).toEqual(one)
+    expect(resizeTargets(one, 0, [])).toEqual(one)
+  })
+
+  it('разные задачи: каждый участник видит в истории свою задачу', () => {
+    const c = conv({
+      targets: [{ kind: 'model', id: 'a' }, { kind: 'model', id: 'b' }],
+      turns: [turn(0, { 'model:a': 'стих готов', 'model:b': 'код готов' }, { 'model:a': 'напиши стих', 'model:b': 'напиши код' }), turn(1, {}, { 'model:a': 'короче', 'model:b': 'добавь тесты' })],
+    })
+    expect(texts(c, 'model:a', 1)).toBe('напиши стих\nстих готов\nкороче')
+    expect(texts(c, 'model:b', 1)).toBe('напиши код\nкод готов\nдобавь тесты')
   })
 })

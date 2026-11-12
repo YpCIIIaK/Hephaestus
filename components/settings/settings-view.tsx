@@ -11,7 +11,7 @@ import { Badge, Card, Segmented, Spinner } from '@/components/ui/misc'
 import { Confirm, Slider, Switch } from '@/components/ui/overlay'
 import { api } from '@/lib/client/llm'
 import { ALIAS_LABELS, pickAliasModel, shortModelName } from '@/lib/models'
-import { useCatalog } from '@/lib/stores/catalog'
+import { usableModels, useCatalog } from '@/lib/stores/catalog'
 import { rehydrateAll } from '@/lib/stores/hydration'
 import { useSettings } from '@/lib/stores/settings'
 import { clearAllPersisted, readAllPersisted, writeAllPersisted } from '@/lib/stores/storage'
@@ -158,6 +158,7 @@ function Models() {
   const setAlias = useSettings((s) => s.setAlias)
   const freeOnly = useSettings((s) => s.freeOnly)
   const models = useCatalog((s) => s.models)
+  const unavailable = useCatalog((s) => s.unavailable)
   const fetchedAt = useCatalog((s) => s.fetchedAt)
   const loading = useCatalog((s) => s.loading)
   const refresh = useCatalog((s) => s.refresh)
@@ -165,7 +166,7 @@ function Models() {
   return (
     <Section icon={<Sparkles />} title="Роли моделей" description="Агенты, шаблоны и судьи ссылаются на роли, а не на конкретные модели. Поменяйте модель здесь — и она сменится везде.">
       {(Object.keys(ALIAS_LABELS) as ModelAlias[]).map((a) => {
-        const auto = pickAliasModel(a, models, freeOnly)
+        const auto = pickAliasModel(a, usableModels(models, unavailable), freeOnly)
         const autoInfo = models.find((m) => m.id === auto)
         return (
           <div key={a} className="grid items-center gap-2 sm:grid-cols-[200px_1fr]">

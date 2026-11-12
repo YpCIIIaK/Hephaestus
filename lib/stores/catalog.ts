@@ -13,6 +13,9 @@ interface CatalogStore {
   errors: string[]
   loading: boolean
   status: ServerStatus | null
+  /** Модели, которые ответили «недоступна» (403/404): id → причина и время */
+  unavailable: Record<string, { reason: string; at: number }>
+  markUnavailable: (id: string, reason: string) => void
   refresh: (force?: boolean) => Promise<void>
   loadStatus: () => Promise<ServerStatus | null>
 }
@@ -25,6 +28,8 @@ export const useCatalog = create<CatalogStore>()(
       errors: [],
       loading: false,
       status: null,
+      unavailable: {},
+      markUnavailable: (id, reason) => set((s) => ({ unavailable: { ...s.unavailable, [id]: { reason, at: Date.now() } } })),
       refresh: async (force = false) => {
         if (get().loading) return
         set({ loading: true })
@@ -48,9 +53,18 @@ export const useCatalog = create<CatalogStore>()(
         }
       },
     }),
-    { name: 'heph-catalog', storage: persistStorage, partialize: (s) => ({ models: s.models, fetchedAt: s.fetchedAt }) },
+    { name: 'heph-catalog', storage: persistStorage, partialize: (s) => ({ models: s.models, fetchedAt: s.fetchedAt, unavailable: s.unavailable }) },
   ),
 )
+
+/** Через сутки недоступную модель снова пробуем: её могли открыть для всех */
+const UNAVAILABLE_TTL_MS = 24 * 3600_000
+
+/** Каталог без моделей, которые недавно ответили «недоступна» — их не берёт автовыбор */
+export function usableModels(models: ModelInfo[], unavailable: CatalogStore['unavailable']): ModelInfo[] {
+  const now = Date.now()
+  return models.filter((m) => !(unavailable[m.id] && now - unavailable[m.id].at < UNAVAILABLE_TTL_MS))
+}
 
 export function modelById(id: string): ModelInfo | undefined {
   return useCatalog.getState().models.find((m) => m.id === id)
@@ -61,14 +75,16 @@ export function resolveModelId(id: string): string | null {
   if (!isAlias(id)) return id
   const chosen = useSettings.getState().aliases[id as ModelAlias]
   if (chosen) return chosen
-  return pickAliasModel(id as ModelAlias, useCatalog.getState().models, useSettings.getState().freeOnly)
+  const { models, unavailable } = useCatalog.getState()
+  return pickAliasModel(id as ModelAlias, usableModels(models, unavailable), useSettings.getState().freeOnly)
 }
 
 export function useResolvedModel(id: string): { id: string | null; info?: ModelInfo } {
   const aliases = useSettings((s) => s.aliases)
   const models = useCatalog((s) => s.models)
+  const unavailable = useCatalog((s) => s.unavailable)
   const freeOnly = useSettings((s) => s.freeOnly)
   if (!isAlias(id)) return { id, info: models.find((m) => m.id === id) }
-  const real = aliases[id as ModelAlias] || pickAliasModel(id as ModelAlias, models, freeOnly)
+  const real = aliases[id as ModelAlias] || pickAliasModel(id as ModelAlias, usableModels(models, unavailable), freeOnly)
   return { id: real, info: real ? models.find((m) => m.id === real) : undefined }
 }

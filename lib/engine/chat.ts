@@ -60,7 +60,10 @@ export interface JudgeResult {
 
 export interface ChatTurn {
   id: string
+  /** Общая задача; в режиме «разные задачи» — первая из них (для заголовка и поиска) */
   user: string
+  /** Режим «разные задачи»: своя задача каждому участнику (ключ участника → текст) */
+  tasks?: Record<string, string>
   attachments?: Attachment[]
   createdAt: number
   replies: Record<string, ChatReply>
@@ -86,6 +89,61 @@ export interface Conversation {
   isolate?: boolean
   /** Копии проекта участников (ключ участника → id копии) */
   sandboxes?: Record<string, string>
+  /** Участник заменил другого (новый ключ → прежний): новая модель продолжает его историю */
+  replaced?: Record<string, string>
+  /** Режим ввода: у каждого участника своя задача */
+  separateTasks?: boolean
+}
+
+/** Ключ участника и все, кого он заменил, — от нового к старому */
+export function keyLineage(conv: Pick<Conversation, 'replaced'>, key: string): string[] {
+  const chain = [key]
+  let k = key
+  while (conv.replaced?.[k] && chain.length < 20 && !chain.includes(conv.replaced[k])) chain.push((k = conv.replaced[k]))
+  return chain
+}
+
+/**
+ * Делает ровно count участников: лишних убирает с конца, недостающих добавляет
+ * моделями из candidates. resolve превращает роль в реальную модель — чтобы
+ * две роли, указывающие на одну модель, не заняли две колонки.
+ */
+export function resizeTargets(targets: ChatTarget[], count: number, candidates: string[], resolve: (id: string) => string | null = (id) => id): ChatTarget[] {
+  if (count <= targets.length) return targets.slice(0, Math.max(1, count))
+  const out = [...targets]
+  const used = new Set(out.filter((t) => t.kind === 'model').map((t) => resolve(t.id) ?? t.id))
+  for (const id of candidates) {
+    if (out.length >= count) break
+    const real = resolve(id)
+    if (!real || used.has(real) || out.some((t) => t.kind === 'model' && t.id === id)) continue
+    used.add(real)
+    out.push({ kind: 'model', id })
+  }
+  return out
+}
+
+/**
+ * Заменяет участника другим (например, другой моделью): новый продолжает его
+ * историю, резюме контекста и копию проекта.
+ */
+export function replaceTarget(conv: Conversation, from: ChatTarget, to: ChatTarget): Partial<Conversation> | null {
+  const oldKey = targetKey(from)
+  const newKey = targetKey(to)
+  if (oldKey === newKey || conv.targets.some((t) => targetKey(t) === newKey)) return null
+  const move = <T,>(map: Record<string, T> | undefined) => {
+    if (!map?.[oldKey]) return map
+    const { [oldKey]: v, ...rest } = map
+    return { ...rest, [newKey]: v }
+  }
+  // Если новый участник уже бывал в диалоге раньше, не зацикливаем цепочку
+  const replaced = { ...conv.replaced, [newKey]: oldKey }
+  if (keyLineage({ replaced }, oldKey).includes(newKey)) delete replaced[newKey]
+  return {
+    targets: conv.targets.map((t) => (targetKey(t) === oldKey ? to : t)),
+    replaced,
+    memory: move(conv.memory),
+    sandboxes: move(conv.sandboxes),
+  }
 }
 
 export interface ContextSummary {
@@ -105,9 +163,11 @@ export function attachmentsBlock(atts: Attachment[] | undefined): string {
   return atts.map((a) => `<file name="${a.name}">\n${a.content}\n</file>`).join('\n\n')
 }
 
-export function userContent(turn: Pick<ChatTurn, 'user' | 'attachments'>): string {
+/** Сообщение пользователя для участника: его отдельная задача или общая */
+export function userContent(turn: Pick<ChatTurn, 'user' | 'attachments' | 'tasks'>, key?: string): string {
+  const text = (key && turn.tasks?.[key]) || turn.user
   const files = attachmentsBlock(turn.attachments)
-  return files ? `${files}\n\n${turn.user}` : turn.user
+  return files ? `${files}\n\n${text}` : text
 }
 
 /** Краткая запись действий с инструментами: иначе на следующем ходе модель не помнит, что читала и меняла */
@@ -138,15 +198,18 @@ interface HistoryPair {
 }
 
 /** Пары «вопрос — ответ этого участника» с хода from до uptoTurn (не включая) */
-function historyPairs(conv: Pick<Conversation, 'turns'>, key: string, from: number, uptoTurn: number): HistoryPair[] {
+function historyPairs(conv: Pick<Conversation, 'turns' | 'replaced'>, key: string, from: number, uptoTurn: number): HistoryPair[] {
+  const lineage = keyLineage(conv, key)
   const pairs: HistoryPair[] = []
   for (let i = from; i < uptoTurn; i++) {
     const turn = conv.turns[i]
-    const reply = turn.replies[key]
+    // Ответ самого участника или того, кого он заменил
+    const replyKey = lineage.find((k) => turn.replies[k])
+    const reply = replyKey ? turn.replies[replyKey] : undefined
     // вопрос без ответа этого участника не нужен в его истории
     if (!reply || !(reply.status === 'done' || (reply.status === 'stopped' && reply.text))) continue
     const messages: LLMMessage[] = [
-      { role: 'user', content: userContent(turn) },
+      { role: 'user', content: userContent(turn, replyKey) },
       { role: 'assistant', content: replyContent(reply) },
     ]
     pairs.push({ turn: i, messages, tokens: messages.reduce((n, m) => n + estimateTokens(m.content) + 4, 0) })
@@ -168,7 +231,7 @@ function contextStart(conv: Pick<Conversation, 'contextFrom' | 'memory'>, key: s
  * Если история всё равно не влезает в бюджет, старые ходы отбрасываются.
  */
 export function buildChatMessages(
-  conv: Pick<Conversation, 'turns' | 'contextFrom' | 'memory'>,
+  conv: Pick<Conversation, 'turns' | 'contextFrom' | 'memory' | 'replaced'>,
   key: string,
   uptoTurn: number,
   systemPrompt: string,
@@ -176,7 +239,7 @@ export function buildChatMessages(
 ): { messages: LLMMessage[]; droppedTurns: number } {
   const { from, summary } = contextStart(conv, key)
   const pairs = historyPairs(conv, key, from, uptoTurn)
-  const current: LLMMessage = { role: 'user', content: userContent(conv.turns[uptoTurn]) }
+  const current: LLMMessage = { role: 'user', content: userContent(conv.turns[uptoTurn], key) }
   const summaryBlock = summary ? `Краткое содержание более ранней части диалога (сжато, чтобы сэкономить контекст):\n${summary.text}` : ''
   const fixed = estimateTokens(systemPrompt) + estimateTokens(summaryBlock) + estimateTokens(current.content)
   let budget = maxContextTokens - fixed
@@ -199,7 +262,7 @@ export function buildChatMessages(
  * ходов для сжатия: всё, кроме последних KEEP_RECENT_TURNS (force — вообще всё).
  */
 export function compactionPlan(
-  conv: Pick<Conversation, 'turns' | 'contextFrom' | 'memory'>,
+  conv: Pick<Conversation, 'turns' | 'contextFrom' | 'memory' | 'replaced'>,
   key: string,
   uptoTurn: number,
   maxContextTokens: number,

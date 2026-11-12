@@ -141,3 +141,19 @@ describe('проверяющие с терминалом', async () => {
     expect(needsScratchCopy(undefined)).toBe(false)
   })
 })
+
+describe('недоступные модели', async () => {
+  const { isModelUnavailable } = await import('@/lib/client/llm')
+  const { usableModels } = await import('@/lib/stores/catalog')
+  it('отличает «модель недоступна» от временного лимита', () => {
+    // так ответила thinkingmachines/inkling-2-small:free, которую автовыбор сделал «Основной»
+    expect(isModelUnavailable('Ошибка 403: thinkingmachines/inkling-2-small:free is only available on agentic harnesses.')).toBe(true)
+    expect(isModelUnavailable('Ошибка 404: No endpoints found for x/y')).toBe(true)
+    expect(isModelUnavailable('Ошибка 429: rate-limited upstream')).toBe(false)
+  })
+  it('недоступную модель автовыбор пропускает сутки', () => {
+    const m = (id: string) => ({ id, name: id, provider: 'openrouter' as const, vendor: 'x' })
+    const now = Date.now()
+    expect(usableModels([m('a'), m('b'), m('c')], { b: { reason: '403', at: now - 1000 }, c: { reason: '403', at: now - 25 * 3600_000 } }).map((x) => x.id)).toEqual(['a', 'c'])
+  })
+})

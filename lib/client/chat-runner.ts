@@ -113,10 +113,10 @@ async function runTarget(conv: Conversation, turnIndex: number, target: ChatTarg
     let done = 0
     const runId = uid('run')
     const store = usePipelines.getState()
-    store.addRun({ id: runId, pipelineId: pipeline.id, pipelineName: pipeline.name, input: turn.user, status: 'running', startedAt: started, nodes: {}, usage: { promptTokens: 0, completionTokens: 0, cost: 0 } })
+    store.addRun({ id: runId, pipelineId: pipeline.id, pipelineName: pipeline.name, input: turn.tasks?.[key] ?? turn.user, status: 'running', startedAt: started, nodes: {}, usage: { promptTokens: 0, completionTokens: 0, cost: 0 } })
     const run = await runPipeline(
       pipeline,
-      userContent(turn),
+      userContent(turn, key),
       { llm: callLLMSafe, tool: callTool, getAgent, decide: getDecider() },
       {
         onNode: (nodeId, p) => {
@@ -365,22 +365,29 @@ async function autoTitle(convId: string) {
   if (title) useChats.getState().patch(convId, { title })
 }
 
-export async function sendMessage(convId: string, text: string, attachments: { name: string; content: string }[] = []) {
+/**
+ * Отправляет ход. tasks — режим «разные задачи»: своя задача каждому участнику;
+ * отвечают только те, кому задача написана (так можно запустить одного).
+ */
+export async function sendMessage(convId: string, text: string, attachments: { name: string; content: string }[] = [], tasks?: Record<string, string>) {
   const conv = getConv(convId)
   if (!conv) return
-  const turn: ChatTurn = { id: uid('turn'), user: text, attachments: attachments.length ? attachments : undefined, createdAt: Date.now(), replies: {} }
-  for (const t of conv.targets) turn.replies[targetKey(t)] = { status: 'streaming', text: '', startedAt: Date.now() }
+  const own = tasks ? Object.fromEntries(Object.entries(tasks).filter(([k, v]) => v.trim() && conv.targets.some((t) => targetKey(t) === k))) : undefined
+  if (own && !Object.keys(own).length) return
+  const targets = own ? conv.targets.filter((t) => own[targetKey(t)]) : conv.targets
+  const turn: ChatTurn = { id: uid('turn'), user: own ? Object.values(own)[0] : text, tasks: own, attachments: attachments.length ? attachments : undefined, createdAt: Date.now(), replies: {} }
+  for (const t of targets) turn.replies[targetKey(t)] = { status: 'streaming', text: '', startedAt: Date.now() }
   useChats.getState().addTurn(convId, turn)
   const fresh = getConv(convId)!
   const turnIndex = fresh.turns.length - 1
   const ac = track(convId)
   try {
     if (fresh.interactions) {
-      for (const target of fresh.targets) {
+      for (const target of targets) {
         if (ac.signal.aborted) break
         await runTarget(fresh, turnIndex, target, ac.signal)
       }
-    } else await Promise.all(fresh.targets.map((t) => runTarget(fresh, turnIndex, t, ac.signal)))
+    } else await Promise.all(targets.map((t) => runTarget(fresh, turnIndex, t, ac.signal)))
   } finally {
     untrack(convId, ac)
   }
@@ -388,7 +395,8 @@ export async function sendMessage(convId: string, text: string, attachments: { n
   void autoTitle(convId)
   const after = getConv(convId)
   const okReplies = after ? Object.values(after.turns[turnIndex]?.replies ?? {}).filter((r) => r.status === 'done' && r.text) : []
-  if (useSettings.getState().chat.autoJudge && okReplies.length >= 2) await judgeTurn(convId, turn.id)
+  // Ответы на разные задачи сравнивать бессмысленно
+  if (useSettings.getState().chat.autoJudge && okReplies.length >= 2 && !own) await judgeTurn(convId, turn.id)
 }
 
 export async function regenerate(convId: string, turnId: string, key: string) {
@@ -421,7 +429,7 @@ function parseKey(key: string): ChatTarget | null {
 export async function judgeTurn(convId: string, turnId: string) {
   const conv = getConv(convId)
   const turn = conv?.turns.find((t) => t.id === turnId)
-  if (!conv || !turn) return
+  if (!conv || !turn || turn.tasks) return
   const entries = Object.entries(turn.replies).filter(([, r]) => r.status === 'done' && r.text.trim())
   if (entries.length < 2) return
   const keys = entries.map(([k]) => k)
