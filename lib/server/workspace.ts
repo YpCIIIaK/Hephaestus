@@ -46,14 +46,19 @@ function isInside(parent: string, child: string): boolean {
 
 /** Превращает пользовательский путь в абсолютный внутри песочницы */
 export async function resolveWorkspacePath(input: string): Promise<{ abs: string; rel: string; root: string }> {
-  const cleaned = String(input ?? '')
+  const raw = String(input ?? '').trim()
+  if (raw.includes('\0')) throw new WorkspaceError('Недопустимый путь')
+  const root = await ensureWorkspace()
+  // Модели часто передают абсолютный путь из описания рабочей папки — внутри неё он допустим.
+  // Иначе ведущий «/» означает корень проекта: «/src/app.ts» — это src/app.ts.
+  const asAbsolute = path.resolve(raw || '.')
+  const insideAsIs = (path.isAbsolute(raw) || /^[a-zA-Z]:[\\/]/.test(raw)) && isInside(root, asAbsolute)
+  const cleaned = raw
     .replace(/\\/g, '/')
     .replace(/^\/+/, '')
+    .replace(/^\.\//, '')
     .replace(/^workspace\//, '')
-    .trim()
-  if (cleaned.includes('\0')) throw new WorkspaceError('Недопустимый путь')
-  const root = await ensureWorkspace()
-  const abs = path.resolve(root, cleaned || '.')
+  const abs = insideAsIs ? asAbsolute : path.resolve(root, cleaned || '.')
   if (!isInside(root, abs)) throw new WorkspaceError('Путь выходит за пределы рабочей папки', 403)
 
   // Проверяем реальный путь ближайшего существующего предка: ссылка внутри

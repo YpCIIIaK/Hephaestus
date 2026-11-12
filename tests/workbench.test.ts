@@ -64,6 +64,13 @@ describe('рабочая папка', () => {
     expect((await tool('list_files', { path: 'docs' })).output).toBe('docs/new.md')
   })
 
+  it('принимает абсолютные пути внутри рабочей папки, а «/путь» считает от корня проекта', async () => {
+    await write('abs/one.txt', 'один')
+    expect((await tool('read_file', { path: path.join(dir, 'abs/one.txt') })).output).toContain('1│ один')
+    expect((await tool('read_file', { path: '/abs/one.txt' })).output).toContain('1│ один')
+    expect((await tool('list_files', { path: dir, depth: 1 })).output).toContain('abs/')
+  })
+
   it('list_files с глубиной показывает подпапки, не раскрывая их', async () => {
     await write('deep/a/b/c.txt', 'c')
     const out = (await tool('list_files', { depth: 1 })).output
