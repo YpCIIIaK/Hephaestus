@@ -1,8 +1,8 @@
 'use client'
 
-import { AlertTriangle, ChartColumn, CheckCircle2, Download, Trash2 } from 'lucide-react'
+import { AlertTriangle, ChartColumn, CheckCircle2, Download, RefreshCw, Trash2 } from 'lucide-react'
 import Link from 'next/link'
-import { Fragment, useMemo, useState } from 'react'
+import { Fragment, useEffect, useMemo, useState } from 'react'
 import { Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { ModelName } from '@/components/model-picker'
 import { PageHeader } from '@/components/shell/page-header'
@@ -11,7 +11,7 @@ import { Card, EmptyState, Meter, Segmented } from '@/components/ui/misc'
 import { Confirm, Menu, MenuContent, MenuItem, MenuTrigger } from '@/components/ui/overlay'
 import type { UsageSource } from '@/lib/engine/llm'
 import { useSettings } from '@/lib/stores/settings'
-import { spentSince, startOfDay, startOfMonth, useUsage, type UsageEvent } from '@/lib/stores/usage'
+import { spentSince, startOfDay, startOfMonth, useUsage, type OpenRouterSpend, type UsageEvent } from '@/lib/stores/usage'
 import { dayKey, downloadFile, formatCost, formatMs, formatTokens } from '@/lib/utils'
 
 const SOURCES: { id: UsageSource; label: string; color: string }[] = [
@@ -25,6 +25,46 @@ const SOURCES: { id: UsageSource; label: string; color: string }[] = [
 const SOURCE_LABEL = Object.fromEntries(SOURCES.map((s) => [s.id, s.label])) as Record<UsageSource, string>
 
 type Period = '7' | '30' | '90' | 'all'
+
+/**
+ * Расходы по данным самого OpenRouter. Приложение видит только завершённые
+ * ответы: прерванный запрос OpenRouter списывает, а расход до нас не доходит.
+ */
+function OpenRouterSpendCard({ spend, localToday, localMonth, onRefresh }: { spend: OpenRouterSpend; localToday: number; localMonth: number; onRefresh: () => void }) {
+  // Сутки у OpenRouter — по UTC, у приложения — по местному времени, поэтому сравниваем месяц
+  const gap = spend.monthly - localMonth
+  return (
+    <Card className="space-y-3 p-4">
+      <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-sm">
+        <span className="font-semibold">По данным OpenRouter</span>
+        <span>
+          Сутки (UTC): <b className="font-mono">{formatCost(spend.daily)}</b>
+        </span>
+        <span>
+          Неделя: <b className="font-mono">{formatCost(spend.weekly)}</b>
+        </span>
+        <span>
+          Месяц: <b className="font-mono">{formatCost(spend.monthly)}</b>
+        </span>
+        {spend.remaining != null && (
+          <span className="text-muted">
+            Остаток лимита ключа: <span className="font-mono">{formatCost(spend.remaining)}</span>
+          </span>
+        )}
+        <Button size="icon-sm" variant="ghost" className="ml-auto" onClick={onRefresh} aria-label="Обновить данные OpenRouter">
+          <RefreshCw />
+        </Button>
+      </div>
+      {gap > 0.01 && (
+        <p className="flex gap-2 rounded-lg border border-warning/30 bg-warning/5 p-2.5 text-xs text-muted">
+          <AlertTriangle className="size-4 shrink-0 text-warning" />
+          За месяц OpenRouter списал на {formatCost(gap)} больше, чем учтено в приложении ({formatCost(localMonth)}). Обычно это прерванные запросы или расходы с этого ключа в других программах. Лимиты расходов сверяются с данными OpenRouter.
+        </p>
+      )}
+      <div className="text-[11px] text-faint">Сегодня в приложении учтено {formatCost(localToday)}; данные OpenRouter обновляются раз в минуту</div>
+    </Card>
+  )
+}
 
 function Kpi({ label, value, hint, children }: { label: string; value: string; hint?: string; children?: React.ReactNode }) {
   return (
@@ -68,6 +108,11 @@ function toCsv(events: UsageEvent[]): string {
 export function AnalyticsView() {
   const events = useUsage((s) => s.events)
   const clear = useUsage((s) => s.clear)
+  const openrouter = useUsage((s) => s.openrouter)
+  const refreshOpenRouter = useUsage((s) => s.refreshOpenRouter)
+  useEffect(() => {
+    void refreshOpenRouter(true)
+  }, [refreshOpenRouter])
   const limits = useSettings((s) => s.limits)
   const [period, setPeriod] = useState<Period>('30')
   const [clearing, setClearing] = useState(false)
@@ -174,6 +219,7 @@ export function AnalyticsView() {
       />
       <div className="min-h-0 flex-1 overflow-y-auto">
         <div className="mx-auto max-w-6xl space-y-6 px-4 py-6 md:px-6">
+          {openrouter && <OpenRouterSpendCard spend={openrouter} localToday={today} localMonth={month} onRefresh={() => refreshOpenRouter(true)} />}
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
             <Kpi label="Сегодня" value={formatCost(today)} hint={limits.dailyUsd ? `лимит $${limits.dailyUsd}` : 'без лимита'}>
               {limits.dailyUsd > 0 && <Meter value={today} max={limits.dailyUsd} className="mt-2.5" />}

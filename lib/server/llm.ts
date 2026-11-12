@@ -315,6 +315,9 @@ export async function* runLLM(req: LLMRequest, signal?: AbortSignal): AsyncGener
   let total: Usage = { ...ZERO_USAGE, cost: null }
   let finish = 'stop'
   let rateRetries = 0
+  // Расход сделанных шагов сообщаем и при ошибке или остановке — иначе он
+  // выпадает из аналитики (длинная цепочка с инструментами стоит десятки шагов)
+  const usageSoFar = (): LLMEvent[] => (total.promptTokens || total.completionTokens || (total.cost ?? 0) > 0 ? [{ t: 'usage', usage: total, model: req.model }] : [])
   let maxTokens = req.maxTokens ?? 4096
   let lowReasoning = false
 
@@ -349,9 +352,13 @@ export async function* runLLM(req: LLMRequest, signal?: AbortSignal): AsyncGener
     try {
       result = yield* streamStep(ep, body, signal, body.tools ? tools.map((t) => t.function.name) : [])
     } catch (e) {
-      if (signal?.aborted) return
+      if (signal?.aborted) {
+        yield* usageSoFar()
+        return
+      }
       if (e instanceof GatewayError && e.opts.network) {
         yield { t: 'error', message: e.message, status: 502 }
+        yield* usageSoFar()
         return
       }
       if (e instanceof GatewayError && e.opts.retryable && rateRetries < RATE_LIMIT_RETRIES) {
@@ -360,7 +367,10 @@ export async function* runLLM(req: LLMRequest, signal?: AbortSignal): AsyncGener
         const why = e.status === 429 ? 'Лимит запросов провайдера' : 'Провайдер временно перегружен'
         yield { t: 'notice', v: `${why} — повтор через ${Math.round(delay / 1000)} с (${rateRetries}/${RATE_LIMIT_RETRIES})` }
         await sleep(delay, signal)
-        if (signal?.aborted) return
+        if (signal?.aborted) {
+          yield* usageSoFar()
+          return
+        }
         step--
         continue
       }
@@ -377,9 +387,11 @@ export async function* runLLM(req: LLMRequest, signal?: AbortSignal): AsyncGener
           continue
         }
         yield { t: 'error', message: describeHttpError(e.status, e.message), status: e.status }
+        yield* usageSoFar()
         return
       }
       yield { t: 'error', message: e instanceof Error ? e.message : String(e), status: e instanceof GatewayError ? e.status : 500 }
+      yield* usageSoFar()
       return
     }
 
@@ -419,6 +431,8 @@ export async function* runLLM(req: LLMRequest, signal?: AbortSignal): AsyncGener
       break
     }
 
+    // Промежуточный итог: если цепочку остановят, расход сделанных шагов уже учтён
+    yield* usageSoFar()
     messages.push({ role: 'assistant', content: result.text || null, tool_calls: result.toolCalls })
     for (const call of result.toolCalls) {
       yield { t: 'tool_call', id: call.id, name: call.function.name, args: call.function.arguments }

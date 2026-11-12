@@ -12,13 +12,19 @@ import { uid } from '../utils'
 // Вызов модели из браузера: псевдонимы → реальные ID, проверка лимитов,
 // поток /api/llm, запись расходов в аналитику.
 
+/** Данные OpenRouter о расходах считаются свежими 10 минут */
+const SPEND_FRESH_MS = 10 * 60_000
+
 export function budgetProblem(): string | null {
   const { limits } = useSettings.getState()
-  const events = useUsage.getState().events
-  if (limits.dailyUsd > 0 && spentSince(events, startOfDay()) >= limits.dailyUsd) {
+  const { events, openrouter } = useUsage.getState()
+  // Прерванные запросы OpenRouter тоже списывает, а до приложения их расход
+  // не доходит — поэтому лимит сверяем и с его собственными данными
+  const fresh = openrouter && Date.now() - openrouter.fetchedAt < SPEND_FRESH_MS ? openrouter : null
+  if (limits.dailyUsd > 0 && Math.max(spentSince(events, startOfDay()), fresh?.daily ?? 0) >= limits.dailyUsd) {
     return `Достигнут дневной лимит расходов ($${limits.dailyUsd}). Его можно поднять в настройках.`
   }
-  if (limits.monthlyUsd > 0 && spentSince(events, startOfMonth()) >= limits.monthlyUsd) {
+  if (limits.monthlyUsd > 0 && Math.max(spentSince(events, startOfMonth()), fresh?.monthly ?? 0) >= limits.monthlyUsd) {
     return `Достигнут месячный лимит расходов ($${limits.monthlyUsd}). Его можно поднять в настройках.`
   }
   return null
@@ -116,6 +122,8 @@ const callLLMOnce: LLMCall = async (req: LLMRequest, opts: LLMCallOptions = {}):
       error,
     })
   }
+  // Сверка с OpenRouter в фоне, не чаще раза в минуту — для лимитов и аналитики
+  if (providerOf(model) === 'openrouter') void useUsage.getState().refreshOpenRouter()
   return { text, reasoning, tools, usage: finalUsage, model, latencyMs, error: aborted ? undefined : error, aborted }
 }
 

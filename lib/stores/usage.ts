@@ -22,11 +22,27 @@ export interface UsageEvent {
 
 const MAX_EVENTS = 20_000
 
+/** Расходы ключа по данным OpenRouter (сутки по UTC, неделя, месяц) */
+export interface OpenRouterSpend {
+  daily: number
+  weekly: number
+  monthly: number
+  total: number
+  limit: number | null
+  remaining: number | null
+  fetchedAt: number
+}
+
 interface UsageStore {
   events: UsageEvent[]
   add: (e: UsageEvent) => void
   clear: () => void
+  openrouter: OpenRouterSpend | null
+  /** Подтянуть расходы с OpenRouter; без force — не чаще раза в минуту */
+  refreshOpenRouter: (force?: boolean) => Promise<void>
 }
+
+let lastRefresh = 0
 
 export const useUsage = create<UsageStore>()(
   persist(
@@ -34,8 +50,20 @@ export const useUsage = create<UsageStore>()(
       events: [],
       add: (e) => set((s) => ({ events: s.events.length >= MAX_EVENTS ? [...s.events.slice(-MAX_EVENTS + 1), e] : [...s.events, e] })),
       clear: () => set({ events: [] }),
+      openrouter: null,
+      refreshOpenRouter: async (force = false) => {
+        if (!force && Date.now() - lastRefresh < 60_000) return
+        lastRefresh = Date.now()
+        try {
+          const res = await fetch(`/api/usage${force ? '?refresh=1' : ''}`)
+          const data = (await res.json()) as { openrouter: OpenRouterSpend | null }
+          if (data.openrouter) set({ openrouter: data.openrouter })
+        } catch {
+          // офлайн — остаёмся при своих подсчётах
+        }
+      },
     }),
-    { name: 'heph-usage', storage: persistStorage },
+    { name: 'heph-usage', storage: persistStorage, partialize: (s) => ({ events: s.events, openrouter: s.openrouter }) },
   ),
 )
 

@@ -265,3 +265,33 @@ describe('шлюз: зацикливание и лимит шагов', () => {
     expect(events.find((e) => e.t === 'error')).toMatchObject({ message: expect.stringMatching(/исчерпала лимит действий \(6\)/) })
   })
 })
+
+describe('шлюз: расход не теряется', () => {
+  // Пользователь видел в аналитике $0.8 при фактических $2.36 на Claude Fable 5.2:
+  // длинные цепочки с инструментами, упавшие или остановленные на середине, не сообщали расход
+  const step = (cost: number) =>
+    sse([{ choices: [{ delta: { tool_calls: [{ index: 0, id: `c${cost}`, function: { name: 'read_file', arguments: `{"path":"f${cost}.txt"}` } }] }, finish_reason: 'tool_calls' }], usage: { prompt_tokens: 10_000, completion_tokens: 100, cost } }])
+
+  it('ошибка посреди цепочки — расход сделанных шагов всё равно приходит', async () => {
+    const answers = [step(0.4), step(0.5), new Response('{"error":{"message":"bad request"}}', { status: 400 })]
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => (String(url).includes('/chat/completions') ? answers.shift()! : new Response('{}'))))
+    const events = await collect(runLLM({ model: 'anthropic/claude-fable-5.2', messages: [{ role: 'user', content: 'работай' }], tools: ['files_read'] }))
+    expect(events.find((e) => e.t === 'error')).toBeTruthy()
+    const usages = events.filter((e) => e.t === 'usage') as { usage: { cost: number } }[]
+    expect(usages.at(-1)!.usage.cost).toBeCloseTo(0.9)
+  })
+
+  it('после каждого шага с инструментами — промежуточный итог: остановка его не теряет', async () => {
+    const answers = [step(0.3), step(0.2), sse([{ choices: [{ delta: { content: 'ok' }, finish_reason: 'stop' }], usage: { prompt_tokens: 1, completion_tokens: 1, cost: 0.1 } }])]
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => (String(url).includes('/chat/completions') ? answers.shift()! : new Response('{}'))))
+    const events = await collect(runLLM({ model: 'anthropic/claude-fable-5.2', messages: [{ role: 'user', content: 'работай' }], tools: ['files_read'] }))
+    const costs = (events.filter((e) => e.t === 'usage') as { usage: { cost: number } }[]).map((e) => Number(e.usage.cost.toFixed(2)))
+    expect(costs).toEqual([0.3, 0.5, 0.6])
+  })
+
+  it('расходы ключа по данным OpenRouter', async () => {
+    const { parseKeyInfo } = await import('@/lib/server/openrouter-spend')
+    expect(parseKeyInfo({ usage: 5.1, usage_daily: 2.36, usage_weekly: 3, usage_monthly: 4, limit: 50, limit_remaining: 44.9 }, 1)).toEqual({ daily: 2.36, weekly: 3, monthly: 4, total: 5.1, limit: 50, remaining: 44.9, fetchedAt: 1 })
+    expect(parseKeyInfo({}, 1)).toMatchObject({ daily: 0, limit: null })
+  })
+})
