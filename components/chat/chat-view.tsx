@@ -1,6 +1,6 @@
 'use client'
 
-import { Columns3, Download, Eraser, FoldVertical, Gavel, MoreHorizontal, PanelLeft, Rows3, ScrollText, Trash2, X } from 'lucide-react'
+import { Columns3, Download, Eraser, FoldVertical, Gavel, GitCompareArrows, MoreHorizontal, PanelLeft, Rows3, ScrollText, Trash2, X } from 'lucide-react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
@@ -206,6 +206,9 @@ export function ChatView() {
               </MenuTrigger>
               <MenuContent>
                 <MenuItem onSelect={() => update({ interactions: !view.interactions })}>Взаимодействия: {view.interactions ? 'вкл' : 'выкл'} · модели видят ответы друг друга; больше токенов</MenuItem>
+                <MenuItem onSelect={() => update({ isolate: !view.isolate })}>
+                  <GitCompareArrows /> Своя копия проекта у каждого: {view.isolate ? 'вкл' : 'выкл'} · для параллельных правок
+                </MenuItem>
                 <MenuItem onSelect={() => setChatDefaults({ autoJudge: !defaults.autoJudge })}>
                   <Gavel /> Автосудья: {defaults.autoJudge ? 'вкл' : 'выкл'}
                 </MenuItem>
@@ -240,7 +243,7 @@ export function ChatView() {
           {view.turns.length === 0 ? (
             <EmptyChat
               onPick={(text) => composer.current?.setText(text)}
-              onPreset={(targets) => update({ targets })}
+              onPreset={(p) => update({ targets: p.targets, ...(p.tools ? { tools: p.tools } : {}), isolate: !!p.isolate })}
             />
           ) : (
             <div className={cn('mx-auto space-y-8 px-3 py-6 md:px-6', view.targets.length > 1 && layout === 'columns' ? 'max-w-[1400px]' : 'max-w-3xl')}>

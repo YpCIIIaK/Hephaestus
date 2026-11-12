@@ -51,6 +51,8 @@ export interface LLMRequest {
   jsonMode?: boolean
   /** Максимум шагов цикла «модель → инструмент → модель» */
   maxToolSteps?: number
+  /** Работать в отдельной копии проекта (id из /api/sandboxes) */
+  sandbox?: string
 }
 
 export interface Usage {

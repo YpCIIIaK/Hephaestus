@@ -2,6 +2,7 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { DATA_DIR, WORKSPACE_DIR } from './paths'
+import { currentScope } from './workspace-scope'
 import { readJson, writeJson } from './json-file'
 
 // Серверные настройки: ключи и адреса, которые не должны попадать в браузер.
@@ -57,6 +58,13 @@ export async function validateWorkspaceDir(input: string): Promise<string> {
 }
 
 export async function getWorkspaceDir(): Promise<string> {
+  const scoped = currentScope()
+  if (scoped) return scoped.root
+  return getProjectDir()
+}
+
+/** Сама папка проекта — без учёта копии, в которой может работать модель */
+export async function getProjectDir(): Promise<string> {
   const s = await loadServerSettings()
   return s.workspaceDir ? path.resolve(s.workspaceDir) : WORKSPACE_DIR
 }

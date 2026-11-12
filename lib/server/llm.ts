@@ -7,6 +7,8 @@ import { buildTools, runTool, type ToolDefinition } from './tools'
 import { mockStream } from './mock-llm'
 import { parseTextToolCalls, partialTagLength, TEXT_TOOL_CALL_TAG } from './text-tool-calls'
 import { projectContext, withSystemBlock } from './memory'
+import { sandboxTree } from './sandboxes'
+import { runInWorkspace } from './workspace-scope'
 
 // Единый шлюз к моделям. Все провайдеры говорят на OpenAI-совместимом API
 // (OpenRouter, Ollama /v1, LM Studio, vLLM…), поэтому клиент один.
@@ -288,7 +290,18 @@ export async function* runLLM(req: LLMRequest, signal?: AbortSignal): AsyncGener
   let jsonMode = !!req.jsonMode
   const codeWork = req.tools?.some((t) => t === 'code' || t === 'terminal' || t === 'files_write')
   const maxSteps = Math.min(req.maxToolSteps ?? (codeWork ? CODE_MAX_STEPS : DEFAULT_MAX_STEPS), MAX_TOOL_STEPS)
-  const messages = withDate(withSystemBlock(req.messages, await projectContext(req.tools).catch(() => '')))
+  // Участник со своей копией проекта: все инструменты работают внутри копии
+  let inScope = <T,>(fn: () => Promise<T>) => fn()
+  if (req.sandbox) {
+    try {
+      const scope = { root: await sandboxTree(req.sandbox), sandbox: true }
+      inScope = (fn) => runInWorkspace(scope, fn)
+    } catch (e) {
+      yield { t: 'error', message: e instanceof Error ? e.message : String(e), status: 404 }
+      return
+    }
+  }
+  const messages = withDate(withSystemBlock(req.messages, await inScope(() => projectContext(req.tools)).catch(() => '')))
   let total: Usage = { ...ZERO_USAGE, cost: null }
   let finish = 'stop'
   let rateRetries = 0
@@ -386,7 +399,7 @@ export async function* runLLM(req: LLMRequest, signal?: AbortSignal): AsyncGener
     messages.push({ role: 'assistant', content: result.text || null, tool_calls: result.toolCalls })
     for (const call of result.toolCalls) {
       yield { t: 'tool_call', id: call.id, name: call.function.name, args: call.function.arguments }
-      const { ok, output } = await runTool(call.function.name, call.function.arguments, signal)
+      const { ok, output } = await inScope(() => runTool(call.function.name, call.function.arguments, signal))
       yield { t: 'tool_result', id: call.id, name: call.function.name, ok, preview: output.slice(0, 600) }
       messages.push({ role: 'tool', tool_call_id: call.id, name: call.function.name, content: output })
     }

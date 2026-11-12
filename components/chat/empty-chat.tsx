@@ -2,8 +2,15 @@
 
 import { BrainCircuit, Code2, Lightbulb, Scale } from 'lucide-react'
 import type { ChatTarget } from '@/lib/engine/chat'
+import type { ToolsetId } from '@/lib/types'
 
-const PRESETS: { title: string; hint: string; targets: ChatTarget[] }[] = [
+export interface ChatPreset {
+  targets: ChatTarget[]
+  tools?: ToolsetId[]
+  isolate?: boolean
+}
+
+const PRESETS: ({ title: string; hint: string } & ChatPreset)[] = [
   { title: 'Одна модель', hint: 'Обычный чат', targets: [{ kind: 'model', id: '@default' }] },
   {
     title: 'Арена трёх',
@@ -32,6 +39,17 @@ const PRESETS: { title: string; hint: string; targets: ChatTarget[] }[] = [
     ],
   },
   {
+    title: 'Правки командой',
+    hint: 'Три модели правят код каждая в своей копии — вы сравниваете и применяете лучшее',
+    targets: [
+      { kind: 'model', id: '@smart' },
+      { kind: 'model', id: '@default' },
+      { kind: 'model', id: '@fast' },
+    ],
+    tools: ['files_read', 'files_write', 'code', 'terminal'],
+    isolate: true,
+  },
+  {
     title: 'Спор с собой',
     hint: 'Аналитик против адвоката дьявола',
     targets: [
@@ -48,7 +66,7 @@ const PROMPTS = [
   { icon: BrainCircuit, text: 'Объясни, как работает механизм внимания в трансформерах, на пальцах.' },
 ]
 
-export function EmptyChat({ onPick, onPreset }: { onPick: (t: string) => void; onPreset: (targets: ChatTarget[]) => void }) {
+export function EmptyChat({ onPick, onPreset }: { onPick: (t: string) => void; onPreset: (preset: ChatPreset) => void }) {
   return (
     <div className="forge-glow flex min-h-full flex-col items-center justify-center px-4 py-10">
       <div className="w-full max-w-3xl">
@@ -59,7 +77,7 @@ export function EmptyChat({ onPick, onPreset }: { onPick: (t: string) => void; o
 
         <div className="mt-8 grid grid-cols-2 gap-2 md:grid-cols-3">
           {PRESETS.map((p) => (
-            <button key={p.title} onClick={() => onPreset(p.targets)} className="rounded-xl border border-border bg-surface/70 px-3 py-2.5 text-left transition-colors hover:border-accent/50 hover:bg-surface">
+            <button key={p.title} onClick={() => onPreset({ targets: p.targets, tools: p.tools, isolate: p.isolate })} className="rounded-xl border border-border bg-surface/70 px-3 py-2.5 text-left transition-colors hover:border-accent/50 hover:bg-surface">
               <div className="text-[13px] font-semibold">{p.title}</div>
               <div className="mt-0.5 text-xs leading-snug text-muted">{p.hint}</div>
             </button>

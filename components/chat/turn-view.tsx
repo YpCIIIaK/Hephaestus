@@ -1,6 +1,6 @@
 'use client'
 
-import { AlertTriangle, Brain, ChevronDown, Crown, FileText, Gavel, Pencil, RotateCcw, Square, ThumbsDown, ThumbsUp } from 'lucide-react'
+import { AlertTriangle, Brain, Check, ChevronDown, Crown, FileText, GitCompareArrows, Gavel, Pencil, RotateCcw, Square, ThumbsDown, ThumbsUp, Trash2 } from 'lucide-react'
 import { memo, useState } from 'react'
 import { CopyButton, Markdown } from '@/components/markdown'
 import { ToolTraceList } from '@/components/tool-chips'
@@ -8,12 +8,108 @@ import { Button } from '@/components/ui/button'
 import { Badge, Spinner } from '@/components/ui/misc'
 import { Tip } from '@/components/ui/overlay'
 import { UsageLine } from '@/components/usage-line'
-import { describeTarget, judgeTurn, regenerate } from '@/lib/client/chat-runner'
+import { toast } from 'sonner'
+import { applySandboxChanges, describeTarget, discardSandbox, judgeTurn, regenerate, sandboxPatch } from '@/lib/client/chat-runner'
 import { participantColor } from '@/lib/colors'
-import { targetKey, type ChatReply, type ChatTarget, type ChatTurn, type JudgeResult } from '@/lib/engine/chat'
+import { targetKey, type ChatReply, type ChatTarget, type ChatTurn, type JudgeResult, type ReplySandbox } from '@/lib/engine/chat'
 import { useChats } from '@/lib/stores/chats'
 import { useSettings } from '@/lib/stores/settings'
 import { cn } from '@/lib/utils'
+
+function DiffView({ patch }: { patch: string }) {
+  return (
+    <pre className="max-h-[480px] overflow-auto border-t border-border bg-surface-2/40 px-3 py-2 font-mono text-[11.5px] leading-relaxed">
+      {patch.split('\n').map((l, i) => (
+        <div
+          key={i}
+          className={cn(
+            'whitespace-pre',
+            l.startsWith('+++') || l.startsWith('---') ? 'font-semibold text-fg' : l.startsWith('+') ? 'bg-success/10 text-success' : l.startsWith('-') ? 'bg-danger/10 text-danger' : l.startsWith('@@') ? 'text-accent' : 'text-muted',
+          )}
+        >
+          {l || ' '}
+        </div>
+      ))}
+    </pre>
+  )
+}
+
+/** Изменения участника в его копии проекта: diff, «Применить», «Удалить копию» */
+function SandboxPanel({ sandbox, convId, turnId, replyKey, streaming }: { sandbox: ReplySandbox; convId: string; turnId: string; replyKey: string; streaming: boolean }) {
+  const [patch, setPatch] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+  const adds = sandbox.files.reduce((n, f) => n + f.additions, 0)
+  const dels = sandbox.files.reduce((n, f) => n + f.deletions, 0)
+  const pending = sandbox.files.filter((f) => !sandbox.applied?.includes(f.path))
+  const toggle = async () => {
+    if (patch != null) return setPatch(null)
+    try {
+      const d = await sandboxPatch(sandbox.id)
+      setPatch(d.patch + (d.truncated ? '\n…[diff слишком большой и обрезан]' : ''))
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e))
+    }
+  }
+  const apply = async () => {
+    setBusy(true)
+    try {
+      const r = await applySandboxChanges(convId, turnId, replyKey)
+      if (r.conflicts.length) toast.warning(`Применено ${r.applied.length}, пропущено ${r.conflicts.length}: эти файлы в проекте изменились после создания копии`)
+      else toast.success(`Изменения перенесены в проект: ${r.applied.length} файл(ов)`)
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+  if (sandbox.removed) return <div className="text-xs text-faint">Копия проекта удалена</div>
+  if (streaming) return <div className="flex items-center gap-2 text-xs text-muted"><GitCompareArrows className="size-3.5" /> Работает в своей копии проекта</div>
+  return (
+    <div className="overflow-hidden rounded-lg border border-border">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 px-3 py-2 text-xs">
+        <GitCompareArrows className="size-3.5 text-accent" />
+        {sandbox.error ? (
+          <span className="text-danger">{sandbox.error}</span>
+        ) : sandbox.files.length ? (
+          <span>
+            Изменения в копии: <b>{sandbox.files.length}</b> файл(ов) <span className="text-success">+{adds}</span> <span className="text-danger">−{dels}</span>
+          </span>
+        ) : (
+          <span className="text-muted">В копии нет изменений</span>
+        )}
+        <span className="ml-auto flex items-center gap-1">
+          {!!sandbox.files.length && (
+            <Button size="sm" variant="ghost" onClick={toggle}>
+              {patch != null ? 'Скрыть diff' : 'Показать diff'}
+            </Button>
+          )}
+          {!!pending.length && (
+            <Button size="sm" variant="primary" disabled={busy} onClick={apply}>
+              {busy ? <Spinner /> : <Check />} Применить к проекту
+            </Button>
+          )}
+          <Tip content="Удалить копию — следующий ход начнёт новую копию с текущего проекта">
+            <Button size="icon-sm" variant="ghost" onClick={() => discardSandbox(convId, turnId, replyKey)} aria-label="Удалить копию">
+              <Trash2 />
+            </Button>
+          </Tip>
+        </span>
+      </div>
+      {!!sandbox.files.length && (
+        <div className="border-t border-border px-3 py-1.5 font-mono text-[11px] text-muted">
+          {sandbox.files.map((f) => (
+            <div key={f.path} className="flex gap-2">
+              <span className={cn('w-3', f.status === 'added' ? 'text-success' : f.status === 'deleted' ? 'text-danger' : 'text-gold')}>{f.status === 'added' ? 'A' : f.status === 'deleted' ? 'D' : 'M'}</span>
+              <span className="min-w-0 flex-1 truncate">{f.path}</span>
+              {sandbox.applied?.includes(f.path) ? <span className="text-success">применено</span> : sandbox.conflicts?.includes(f.path) ? <span className="text-danger">конфликт</span> : <span>+{f.additions} −{f.deletions}</span>}
+            </div>
+          ))}
+        </div>
+      )}
+      {patch != null && <DiffView patch={patch} />}
+    </div>
+  )
+}
 
 function Reasoning({ text, streaming }: { text: string; streaming: boolean }) {
   const [open, setOpen] = useState(false)
@@ -111,6 +207,7 @@ const ReplyCard = memo(function ReplyCard({
             <span className="min-w-0 break-words">{reply.error}</span>
           </div>
         )}
+        {reply.sandbox && <SandboxPanel sandbox={reply.sandbox} convId={convId} turnId={turnId} replyKey={key} streaming={streaming} />}
         {reply.status === 'stopped' && <div className="text-xs text-faint">Остановлено</div>}
       </div>
       {!streaming && (

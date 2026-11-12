@@ -2,6 +2,7 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import type { LLMMessage, ToolsetId } from '../types'
 import { getTerminalSettings, getWorkspaceDir } from './settings'
+import { currentScope } from './workspace-scope'
 import { withFileLock } from './workspace'
 
 // Память проекта — как CLAUDE.md у Claude Code: файл в корне рабочей папки с
@@ -35,6 +36,9 @@ export async function projectContext(tools: ToolsetId[] | undefined): Promise<st
     `ОС: ${os}. Терминал: ${terminal.mode === 'full' && tools.includes('terminal') ? `доступен (run_command, лимит ${terminal.timeoutSec} с на команду)` : 'недоступен'}.`,
     'Сначала изучи нужные файлы, потом действуй. Не выдумывай содержимое файлов — читай их.',
   ]
+  if (currentScope()?.sandbox) {
+    lines.push('Это твоя отдельная копия проекта: другие модели работают в своих копиях, а твои правки попадут в проект, только когда пользователь их примет. Делай законченные правки и проверяй их тестами.')
+  }
   if (memory) {
     const text = memory.content.length > MAX_MEMORY_CHARS ? memory.content.slice(0, MAX_MEMORY_CHARS) + '\n…[обрезано]' : memory.content
     lines.push(`\nПамять проекта — файл ${memory.name} (правила и договорённости, следуй им):\n<project_memory>\n${text.trim()}\n</project_memory>`)

@@ -22,6 +22,7 @@ const schema = z.object({
   tools: z.array(z.enum(['web', 'files_read', 'files_write', 'code', 'terminal', 'knowledge', 'skills'])).optional(),
   jsonMode: z.boolean().optional(),
   maxToolSteps: z.number().int().min(0).max(50).optional(),
+  sandbox: z.string().regex(/^sb_[a-z0-9]+$/).optional(),
 })
 
 export async function POST(req: Request) {

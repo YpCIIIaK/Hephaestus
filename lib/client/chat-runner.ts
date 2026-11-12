@@ -1,7 +1,7 @@
 'use client'
 
 import { create } from 'zustand'
-import { buildChatMessages, buildCompactionMessages, buildJudgeMessages, buildTitleMessages, compactionPlan, fallbackTitle, parseJudge, parseTitle, targetKey, userContent, type ChatReply, type ChatTarget, type ChatTurn, type Conversation } from '../engine/chat'
+import { buildChatMessages, buildCompactionMessages, buildJudgeMessages, buildTitleMessages, compactionPlan, fallbackTitle, parseJudge, parseTitle, targetKey, userContent, type ChatReply, type ChatTarget, type ChatTurn, type Conversation, type ReplySandbox } from '../engine/chat'
 import { runPipeline } from '../engine/pipeline'
 import { shortModelName } from '../models'
 import { getAgent } from '../stores/agents'
@@ -11,7 +11,7 @@ import { usePipelines } from '../stores/pipelines'
 import { useSettings } from '../stores/settings'
 import type { LLMEvent, ToolsetId, ToolTrace } from '../types'
 import { uid } from '../utils'
-import { callLLM, callTool } from './llm'
+import { api, callLLM, callTool } from './llm'
 
 // Логика чата: параллельные ответы участников, судья, автозаголовок.
 
@@ -173,13 +173,25 @@ async function runTarget(conv: Conversation, turnIndex: number, target: ChatTarg
     messages.unshift({ role: 'system', content: `Ответы других участников этого обсуждения. Учитывай их и явно называй участника, если дополняешь или оспариваешь его вывод:\n\n${received.map((item) => `${item.name}: ${item.text}`).join('\n\n')}` })
     patchReply(conv.id, turn.id, key, { received })
   }
+  // Отдельная копия проекта: участник правит её, а не оригинал
+  let sandbox: string | undefined
+  if (conv.isolate && tools.includes('files_write')) {
+    try {
+      sandbox = await ensureSandbox(conv.id, key, describeTarget(target).name)
+    } catch (e) {
+      patchReply(conv.id, turn.id, key, { status: 'error', error: `Не удалось создать копию проекта: ${e instanceof Error ? e.message : String(e)}` })
+      return
+    }
+    patchReply(conv.id, turn.id, key, { sandbox: { id: sandbox, files: [] } })
+  }
+
   let text = ''
   let reasoning = ''
   const traces: ToolTrace[] = []
   const notices: string[] = []
   const upd = throttled<Partial<ChatReply>>((p) => patchReply(conv.id, turn.id, key, p))
   const res = await callLLM(
-    { model, messages, temperature, maxTokens, tools },
+    { model, messages, temperature, maxTokens, tools, sandbox },
     {
       signal,
       meta: { source: 'chat', label: describeTarget(target).name },
@@ -215,6 +227,54 @@ async function runTarget(conv: Conversation, turnIndex: number, target: ChatTarg
     latencyMs: res.latencyMs,
     model: res.model,
   })
+  if (sandbox) patchReply(conv.id, turn.id, key, { sandbox: await sandboxSummary(sandbox) })
+}
+
+/** Копия проекта участника: одна на весь диалог, чтобы правки копились от хода к ходу */
+async function ensureSandbox(convId: string, key: string, label: string): Promise<string> {
+  const existing = getConv(convId)?.sandboxes?.[key]
+  if (existing) return existing
+  const { id } = await api<{ id: string }>('/api/sandboxes', { method: 'POST', json: { action: 'create', label } })
+  const conv = getConv(convId)
+  useChats.getState().patch(convId, { sandboxes: { ...conv?.sandboxes, [key]: id } })
+  return id
+}
+
+async function sandboxSummary(id: string): Promise<ReplySandbox> {
+  try {
+    const d = await api<{ files: ReplySandbox['files'] }>(`/api/sandboxes?id=${id}`)
+    return { id, files: d.files }
+  } catch (e) {
+    return { id, files: [], error: e instanceof Error ? e.message : String(e) }
+  }
+}
+
+export async function sandboxPatch(id: string): Promise<{ patch: string; truncated: boolean }> {
+  return api(`/api/sandboxes?id=${id}`)
+}
+
+/** Переносит правки участника из его копии в проект */
+export async function applySandboxChanges(convId: string, turnId: string, key: string): Promise<{ applied: string[]; conflicts: string[] }> {
+  const reply = getConv(convId)?.turns.find((t) => t.id === turnId)?.replies[key]
+  if (!reply?.sandbox) return { applied: [], conflicts: [] }
+  const res = await api<{ applied: string[]; conflicts: string[] }>('/api/sandboxes', { method: 'POST', json: { action: 'apply', id: reply.sandbox.id } })
+  patchReply(convId, turnId, key, { sandbox: { ...reply.sandbox, applied: [...(reply.sandbox.applied ?? []), ...res.applied], conflicts: res.conflicts } })
+  return res
+}
+
+/** Удаляет копию участника; следующий ход начнёт новую копию с текущего проекта */
+export async function discardSandbox(convId: string, turnId: string, key: string) {
+  const conv = getConv(convId)
+  const reply = conv?.turns.find((t) => t.id === turnId)?.replies[key]
+  if (!conv || !reply?.sandbox) return
+  await api(`/api/sandboxes?id=${reply.sandbox.id}`, { method: 'DELETE' })
+  const sandboxes = Object.fromEntries(Object.entries(conv.sandboxes ?? {}).filter(([, id]) => id !== reply.sandbox!.id))
+  useChats.getState().patch(convId, { sandboxes })
+  // Копия общая для всех ходов участника — помечаем удалённой везде
+  for (const t of conv.turns) {
+    const r = t.replies[key]
+    if (r?.sandbox?.id === reply.sandbox.id) patchReply(convId, t.id, key, { sandbox: { ...r.sandbox, removed: true } })
+  }
 }
 
 /** Сжимает историю участника и запоминает резюме; true — если получилось */
@@ -317,9 +377,16 @@ export async function regenerate(convId: string, turnId: string, key: string) {
   const turnIndex = conv.turns.findIndex((t) => t.id === turnId)
   const target = conv.targets.find((t) => targetKey(t) === key) ?? parseKey(key)
   if (turnIndex === -1 || !target) return
+  // Повтор в отдельной копии начинается с чистой копии: старые правки участника не мешают
+  const sb = conv.sandboxes?.[key]
+  if (conv.isolate && sb && turnIndex === conv.turns.length - 1) {
+    await api(`/api/sandboxes?id=${sb}`, { method: 'DELETE' }).catch(() => {})
+    const { [key]: _, ...rest } = conv.sandboxes ?? {}
+    useChats.getState().patch(convId, { sandboxes: rest })
+  }
   const ac = track(convId)
   try {
-    await runTarget(conv, turnIndex, target, ac.signal)
+    await runTarget(getConv(convId) ?? conv, turnIndex, target, ac.signal)
   } finally {
     untrack(convId, ac)
   }
@@ -338,7 +405,17 @@ export async function judgeTurn(convId: string, turnId: string) {
   const entries = Object.entries(turn.replies).filter(([, r]) => r.status === 'done' && r.text.trim())
   if (entries.length < 2) return
   const keys = entries.map(([k]) => k)
-  const replies = entries.map(([k, r]) => ({ key: k, name: describeTarget(parseKey(k)!).name, text: r.text }))
+  const replies = await Promise.all(
+    entries.map(async ([k, r]) => {
+      let text = r.text
+      // Судья оценивает не только рассказ о правках, но и сами правки
+      if (r.sandbox && !r.sandbox.removed && r.sandbox.files.length) {
+        const d = await sandboxPatch(r.sandbox.id).catch(() => null)
+        if (d) text += `\n\n<изменения в файлах>\n${d.patch.slice(0, 12_000)}${d.patch.length > 12_000 || d.truncated ? '\n…[diff обрезан]' : ''}\n</изменения в файлах>`
+      }
+      return { key: k, name: describeTarget(parseKey(k)!).name, text }
+    }),
+  )
   const store = useChats.getState()
   store.setJudge(convId, turnId, { status: 'streaming', ranking: [], synthesis: '', raw: '' })
   const ac = track(convId)

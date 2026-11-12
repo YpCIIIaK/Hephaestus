@@ -34,6 +34,18 @@ export interface ChatReply {
   rating?: 1 | -1
   /** Для пайплайнов — прогресс узлов */
   progress?: { done: number; total: number; current?: string }
+  /** Участник работал в своей копии проекта: что он в ней изменил */
+  sandbox?: ReplySandbox
+}
+
+export interface ReplySandbox {
+  id: string
+  files: { path: string; status: 'added' | 'modified' | 'deleted'; additions: number; deletions: number }[]
+  /** Файлы, уже перенесённые в проект */
+  applied?: string[]
+  conflicts?: string[]
+  removed?: boolean
+  error?: string
 }
 
 export interface JudgeResult {
@@ -70,6 +82,10 @@ export interface Conversation {
   contextFrom?: number
   /** Сжатая история каждого участника: краткое содержание ходов до uptoTurn */
   memory?: Record<string, ContextSummary>
+  /** Каждый участник правит свою копию проекта */
+  isolate?: boolean
+  /** Копии проекта участников (ключ участника → id копии) */
+  sandboxes?: Record<string, string>
 }
 
 export interface ContextSummary {
