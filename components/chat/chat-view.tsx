@@ -6,7 +6,7 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'rea
 import { Button } from '@/components/ui/button'
 import { Segmented } from '@/components/ui/misc'
 import { Confirm, Dialog, Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger, Popover, PopoverContent, PopoverTrigger, Sheet, Tip } from '@/components/ui/overlay'
-import { ModelList } from '@/components/model-picker'
+import { EffortSelect, ModelList } from '@/components/model-picker'
 import { Textarea } from '@/components/ui/field'
 import { toast } from 'sonner'
 import { clearContext, compactContext, conversationToMarkdown, describeTarget, newConversation, sendMessage, stopConversation, useChatRuntime } from '@/lib/client/chat-runner'
@@ -40,7 +40,7 @@ function TargetChip({ target, index, onRemove, removable, onReplace }: { target:
   const info = describeTarget(target)
   const [open, setOpen] = useState(false)
   return (
-    <span className="inline-flex h-7 max-w-56 shrink-0 items-center gap-1.5 rounded-lg border border-border bg-surface pl-2 pr-1 text-xs font-medium" title={info.subtitle}>
+    <span className="inline-flex h-7 max-w-72 shrink-0 items-center gap-1.5 rounded-lg border border-border bg-surface pl-2 pr-1 text-xs font-medium" title={info.subtitle}>
       <span className="size-2 shrink-0 rounded-full" style={{ background: participantColor(index) }} />
       {info.emoji && <span>{info.emoji}</span>}
       {target.kind === 'model' ? (
@@ -65,6 +65,7 @@ function TargetChip({ target, index, onRemove, removable, onReplace }: { target:
       ) : (
         <span className="truncate">{info.name}</span>
       )}
+      {target.kind === 'model' && <EffortSelect modelId={target.id} onChange={onReplace} size="xs" />}
       {removable && (
         <button onClick={onRemove} className="rounded p-0.5 text-faint hover:bg-surface-2 hover:text-fg" aria-label={`Убрать ${info.name}`}>
           <X className="size-3" />

@@ -1,0 +1,365 @@
+{
+  "id": "pl_repo_janitor_routine",
+  "name": "repo-janitor: цикл бенчмарка (ROUTINE.md)",
+  "emoji": "🧹",
+  "description": "Импорт порядка действий: 9 шагов, общие правила, шаблон отчёта, проверка",
+  "nodes": [
+    {
+      "id": "in",
+      "kind": "input",
+      "label": "Задача",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "config": {}
+    },
+    {
+      "id": "s1",
+      "kind": "agent",
+      "label": "0.5 Tracks",
+      "position": {
+        "x": 300,
+        "y": 0
+      },
+      "config": {
+        "model": "@smart",
+        "tools": [
+          "files_read",
+          "files_write",
+          "code",
+          "terminal",
+          "web"
+        ],
+        "systemPrompt": "Ты выполняешь порядок действий «Benchmark routine — runbook for an autonomous agent» по шагам: на каждом шаге — только свой шаг, работая инструментами в рабочей папке (команды, файлы, поиск). Не выдумывай результаты команд — запускай их и опирайся на реальный вывод. Если шаг выполнить нельзя (нет доступа, нет данных) — так и напиши, с причиной.\n\nВводная часть документа:\nYou are taking over the recurring benchmark loop of repo-janitor. Read\n`benchmark/WORKFLOW.md` once first (commands, confidence model, environment\ngotchas). This file says **what to do every cycle, what you must not do, and how\nto report**, so a reviewer can check your work quickly.\n\nОбщие правила — соблюдай на каждом шаге:\n## 0. Ground rules (non-negotiable)\n1. **Work on a branch named `bench/<date>-<n>`**, never directly on `main`.\n   Open one pull request per cycle. The owner or a reviewer merges it.\n2. **Never force-push, never rewrite history, never delete labels** you did not\n   create in this cycle.\n3. **Never edit** `packages/core/src/engine.ts` / `lib/score.ts` (the score),\n   `packages/core/src/confidence.ts` (the scale), the `action` package, or the\n   website, unless the task explicitly says so. Scanner files\n   (`packages/core/src/scanners/*.ts`) are in scope.\n4. **Never lower a recall check to make it pass.** If a deliberately vulnerable\n   app loses a true positive, the fix is wrong — revert it.\n5. **No test may be skipped, disabled or loosened** to get green.\n6. **One scanner change = one commit = one regression test**, with a message\n   that names the false-positive cluster it removes.\n7. If you are unsure whether something is a true positive, label nothing and\n   list it under \"Unsure\" in the report.",
+        "prompt": "Задача пользователя: {{input}}\n\nШаг 1 из 9: 0.5 Tracks — one track per cycle\n\nThe corpus is read in tracks (`benchmark/tracks.mjs`): general, random,\nsecurity, infra, mobile, webBackends. Each has an explicit population, a\nlabels-per-rule target and its own precision (`score.mjs --track X`,\nshown on /state). Work one track per cycle:\n\n- add repos that fit the track's population (or list `\"tracks\": [...]` on a\n  corpus entry to add it by hand);\n- sample with `node benchmark/sample.mjs --spread 4 --track X`, which aims at\n  that track's target;\n- report the track's precision and rules-at-target before and after.\nDo not add repos to the random layer by hand: only `random-layer.mjs` draws it.\n\nВыполни этот шаг. В конце ответа — коротко: что сделано, ключевые цифры и факты, что не получилось и почему, что важно для следующих шагов.",
+        "maxTokens": 4000,
+        "temperature": 0.3
+      }
+    },
+    {
+      "id": "s2",
+      "kind": "agent",
+      "label": "1.1 Add repos",
+      "position": {
+        "x": 600,
+        "y": 0
+      },
+      "config": {
+        "model": "@smart",
+        "tools": [
+          "files_read",
+          "files_write",
+          "code",
+          "terminal",
+          "web"
+        ],
+        "systemPrompt": "Ты выполняешь порядок действий «Benchmark routine — runbook for an autonomous agent» по шагам: на каждом шаге — только свой шаг, работая инструментами в рабочей папке (команды, файлы, поиск). Не выдумывай результаты команд — запускай их и опирайся на реальный вывод. Если шаг выполнить нельзя (нет доступа, нет данных) — так и напиши, с причиной.\n\nВводная часть документа:\nYou are taking over the recurring benchmark loop of repo-janitor. Read\n`benchmark/WORKFLOW.md` once first (commands, confidence model, environment\ngotchas). This file says **what to do every cycle, what you must not do, and how\nto report**, so a reviewer can check your work quickly.\n\nОбщие правила — соблюдай на каждом шаге:\n## 0. Ground rules (non-negotiable)\n1. **Work on a branch named `bench/<date>-<n>`**, never directly on `main`.\n   Open one pull request per cycle. The owner or a reviewer merges it.\n2. **Never force-push, never rewrite history, never delete labels** you did not\n   create in this cycle.\n3. **Never edit** `packages/core/src/engine.ts` / `lib/score.ts` (the score),\n   `packages/core/src/confidence.ts` (the scale), the `action` package, or the\n   website, unless the task explicitly says so. Scanner files\n   (`packages/core/src/scanners/*.ts`) are in scope.\n4. **Never lower a recall check to make it pass.** If a deliberately vulnerable\n   app loses a true positive, the fix is wrong — revert it.\n5. **No test may be skipped, disabled or loosened** to get green.\n6. **One scanner change = one commit = one regression test**, with a message\n   that names the false-positive cluster it removes.\n7. If you are unsure whether something is a true positive, label nothing and\n   list it under \"Unsure\" in the report.",
+        "prompt": "Задача пользователя: {{input}}\n\nШаг 2 из 9: 1.1 Add repos (target 100–200)\n\n- Choose themes the corpus lacks (check `benchmark/STATS.md` \"By main\n  language\" and the corpus itself). Mix applications, infrastructure,\n  libraries, and at least 2–3 deliberately vulnerable apps if any new ones exist.\n- Resolve each with `GIT_TERMINAL_PROMPT=0 git ls-remote https://github.com/<o>/<r> HEAD`.\n- Skip: already present (by GitHub repository ID, url, name, or SHA), archived mirrors, renamed\n  duplicates, and repos whose clone would exceed the scan limit (1.2).\n- Check the candidate's GitHub repository ID against `benchmark/identities.json` and extend that snapshot for new entries. A rename keeps the same ID even when the URL and pinned SHA differ. Existing alias groups are recorded in the cycle reviews; do not count another alias as a new project.\n- Append to `corpus.json` as `{\"name\": \"<owner>-<repo>\" lowercased with non-alnum → \"-\", \"url\", \"sha\"}`.\n- Commit: `Corpus: add N repos (<themes>)`.\n\nИтог предыдущего шага:\n{{prev}}\n\nВыполни этот шаг. В конце ответа — коротко: что сделано, ключевые цифры и факты, что не получилось и почему, что важно для следующих шагов.",
+        "maxTokens": 4000,
+        "temperature": 0.3
+      }
+    },
+    {
+      "id": "s3",
+      "kind": "agent",
+      "label": "1.2 Scan",
+      "position": {
+        "x": 900,
+        "y": 0
+      },
+      "config": {
+        "model": "@smart",
+        "tools": [
+          "files_read",
+          "files_write",
+          "code",
+          "terminal",
+          "web"
+        ],
+        "systemPrompt": "Ты выполняешь порядок действий «Benchmark routine — runbook for an autonomous agent» по шагам: на каждом шаге — только свой шаг, работая инструментами в рабочей папке (команды, файлы, поиск). Не выдумывай результаты команд — запускай их и опирайся на реальный вывод. Если шаг выполнить нельзя (нет доступа, нет данных) — так и напиши, с причиной.\n\nВводная часть документа:\nYou are taking over the recurring benchmark loop of repo-janitor. Read\n`benchmark/WORKFLOW.md` once first (commands, confidence model, environment\ngotchas). This file says **what to do every cycle, what you must not do, and how\nto report**, so a reviewer can check your work quickly.\n\nОбщие правила — соблюдай на каждом шаге:\n## 0. Ground rules (non-negotiable)\n1. **Work on a branch named `bench/<date>-<n>`**, never directly on `main`.\n   Open one pull request per cycle. The owner or a reviewer merges it.\n2. **Never force-push, never rewrite history, never delete labels** you did not\n   create in this cycle.\n3. **Never edit** `packages/core/src/engine.ts` / `lib/score.ts` (the score),\n   `packages/core/src/confidence.ts` (the scale), the `action` package, or the\n   website, unless the task explicitly says so. Scanner files\n   (`packages/core/src/scanners/*.ts`) are in scope.\n4. **Never lower a recall check to make it pass.** If a deliberately vulnerable\n   app loses a true positive, the fix is wrong — revert it.\n5. **No test may be skipped, disabled or loosened** to get green.\n6. **One scanner change = one commit = one regression test**, with a message\n   that names the false-positive cluster it removes.\n7. If you are unsure whether something is a true positive, label nothing and\n   list it under \"Unsure\" in the report.",
+        "prompt": "Задача пользователя: {{input}}\n\nШаг 3 из 9: 1.2 Scan\n\n```\npnpm install && pnpm run build:cli          # once, before scanning; never during\nBENCH_DROP_CLONES=1 BENCH_JOBS=4 node benchmark/run.mjs <names…>\n```\n\n- Run as a tracked background job; batches over ~120 repos → split.\n- If interrupted: `node benchmark/resume.mjs` (only rescans missing/stale).\n- A repo that fails to clone 4×: remove it from `corpus.json`, list it in the report.\n- **Clone size limit: 2000 MB, the `run.mjs` default (`BENCH_MAX_MB`).** Do not\n  set `BENCH_MAX_MB`; every cycle must use the same limit, or repos between two\n  limits are silently left on old results. A repo rejected as \"too large\":\n  remove it from `corpus.json` and list it in the report.\n\nИтог предыдущего шага:\n{{prev}}\n\nВыполни этот шаг. В конце ответа — коротко: что сделано, ключевые цифры и факты, что не получилось и почему, что важно для следующих шагов.",
+        "maxTokens": 4000,
+        "temperature": 0.3
+      }
+    },
+    {
+      "id": "s4",
+      "kind": "agent",
+      "label": "1.3 Label",
+      "position": {
+        "x": 900,
+        "y": 170
+      },
+      "config": {
+        "model": "@smart",
+        "tools": [
+          "files_read",
+          "files_write",
+          "code",
+          "terminal",
+          "web"
+        ],
+        "systemPrompt": "Ты выполняешь порядок действий «Benchmark routine — runbook for an autonomous agent» по шагам: на каждом шаге — только свой шаг, работая инструментами в рабочей папке (команды, файлы, поиск). Не выдумывай результаты команд — запускай их и опирайся на реальный вывод. Если шаг выполнить нельзя (нет доступа, нет данных) — так и напиши, с причиной.\n\nВводная часть документа:\nYou are taking over the recurring benchmark loop of repo-janitor. Read\n`benchmark/WORKFLOW.md` once first (commands, confidence model, environment\ngotchas). This file says **what to do every cycle, what you must not do, and how\nto report**, so a reviewer can check your work quickly.\n\nОбщие правила — соблюдай на каждом шаге:\n## 0. Ground rules (non-negotiable)\n1. **Work on a branch named `bench/<date>-<n>`**, never directly on `main`.\n   Open one pull request per cycle. The owner or a reviewer merges it.\n2. **Never force-push, never rewrite history, never delete labels** you did not\n   create in this cycle.\n3. **Never edit** `packages/core/src/engine.ts` / `lib/score.ts` (the score),\n   `packages/core/src/confidence.ts` (the scale), the `action` package, or the\n   website, unless the task explicitly says so. Scanner files\n   (`packages/core/src/scanners/*.ts`) are in scope.\n4. **Never lower a recall check to make it pass.** If a deliberately vulnerable\n   app loses a true positive, the fix is wrong — revert it.\n5. **No test may be skipped, disabled or loosened** to get green.\n6. **One scanner change = one commit = one regression test**, with a message\n   that names the false-positive cluster it removes.\n7. If you are unsure whether something is a true positive, label nothing and\n   list it under \"Unsure\" in the report.",
+        "prompt": "Задача пользователя: {{input}}\n\nШаг 4 из 9: 1.3 Label\n\n```\nnode benchmark/sample.mjs --spread 2 <names…> > /tmp/sample.txt\n```\n\nFor each sampled finding open the source (`BENCH_KEEP_TREES=1` rerun, or\nclone) and read ±20 lines. Criterion:\n\n- `tp` — the claim is true **and** a maintainer of that project would act on it.\n- `fp` — otherwise. Typical fp: output that *is* the program's purpose (CLI\n  prints), privileged containers that must be privileged (CNI, GPU, node\n  agents), exports consumed by tooling (Storybook, plugins, public API),\n  findings in vendored / generated / test-fixture / docs-example code.\n- A deliberately vulnerable app's intended hole is `tp`.\n\nRecord: `printf '%s\\n' \"<repo> tp <finding-id>\" … | node benchmark/label.mjs`.\nTarget: **≥ 60 new labels per cycle**, high and medium confidence first.\n\nSpend labels where they teach something. `sample.mjs --spread` already skips\nsaturated rules (≥ 30 labels at ≥ 95% precision — e.g. action pinning, token\npermissions) and gives weak or barely labelled rules (< 80% or < 10 labels)\na double quota. Do not add labels to a skipped rule unless you are checking\na suspected regression. At most **15 labels per cycle** may go to rules that\nare already above 90% precision; the rest go to the weak ones.\n\nИтог предыдущего шага:\n{{prev}}\n\nВыполни этот шаг. В конце ответа — коротко: что сделано, ключевые цифры и факты, что не получилось и почему, что важно для следующих шагов.",
+        "maxTokens": 4000,
+        "temperature": 0.3
+      }
+    },
+    {
+      "id": "s5",
+      "kind": "agent",
+      "label": "1.4 Fix false-positive clusters",
+      "position": {
+        "x": 600,
+        "y": 170
+      },
+      "config": {
+        "model": "@smart",
+        "tools": [
+          "files_read",
+          "files_write",
+          "code",
+          "terminal",
+          "web"
+        ],
+        "systemPrompt": "Ты выполняешь порядок действий «Benchmark routine — runbook for an autonomous agent» по шагам: на каждом шаге — только свой шаг, работая инструментами в рабочей папке (команды, файлы, поиск). Не выдумывай результаты команд — запускай их и опирайся на реальный вывод. Если шаг выполнить нельзя (нет доступа, нет данных) — так и напиши, с причиной.\n\nВводная часть документа:\nYou are taking over the recurring benchmark loop of repo-janitor. Read\n`benchmark/WORKFLOW.md` once first (commands, confidence model, environment\ngotchas). This file says **what to do every cycle, what you must not do, and how\nto report**, so a reviewer can check your work quickly.\n\nОбщие правила — соблюдай на каждом шаге:\n## 0. Ground rules (non-negotiable)\n1. **Work on a branch named `bench/<date>-<n>`**, never directly on `main`.\n   Open one pull request per cycle. The owner or a reviewer merges it.\n2. **Never force-push, never rewrite history, never delete labels** you did not\n   create in this cycle.\n3. **Never edit** `packages/core/src/engine.ts` / `lib/score.ts` (the score),\n   `packages/core/src/confidence.ts` (the scale), the `action` package, or the\n   website, unless the task explicitly says so. Scanner files\n   (`packages/core/src/scanners/*.ts`) are in scope.\n4. **Never lower a recall check to make it pass.** If a deliberately vulnerable\n   app loses a true positive, the fix is wrong — revert it.\n5. **No test may be skipped, disabled or loosened** to get green.\n6. **One scanner change = one commit = one regression test**, with a message\n   that names the false-positive cluster it removes.\n7. If you are unsure whether something is a true positive, label nothing and\n   list it under \"Unsure\" in the report.",
+        "prompt": "Задача пользователя: {{input}}\n\nШаг 5 из 9: 1.4 Fix false-positive clusters\n\n- Group the fp by *why* (directory kind, file kind, framework convention).\n- A cluster is worth fixing if it has **≥ 3 fp across ≥ 2 repos**.\n- Fix with the **narrowest** rule (a path pattern or a precise syntactic\n  check), add a test in `packages/core/test/scanners/<scanner>.test.ts` that\n  fails before and passes after.\n- Do not touch rules whose precision is already ≥ 90% unless a cluster is clear.\n\nИтог предыдущего шага:\n{{prev}}\n\nВыполни этот шаг. В конце ответа — коротко: что сделано, ключевые цифры и факты, что не получилось и почему, что важно для следующих шагов.",
+        "maxTokens": 4000,
+        "temperature": 0.3
+      }
+    },
+    {
+      "id": "s6",
+      "kind": "agent",
+      "label": "1.5 Verify",
+      "position": {
+        "x": 300,
+        "y": 170
+      },
+      "config": {
+        "model": "@smart",
+        "tools": [
+          "files_read",
+          "files_write",
+          "code",
+          "terminal",
+          "web"
+        ],
+        "systemPrompt": "Ты выполняешь порядок действий «Benchmark routine — runbook for an autonomous agent» по шагам: на каждом шаге — только свой шаг, работая инструментами в рабочей папке (команды, файлы, поиск). Не выдумывай результаты команд — запускай их и опирайся на реальный вывод. Если шаг выполнить нельзя (нет доступа, нет данных) — так и напиши, с причиной.\n\nВводная часть документа:\nYou are taking over the recurring benchmark loop of repo-janitor. Read\n`benchmark/WORKFLOW.md` once first (commands, confidence model, environment\ngotchas). This file says **what to do every cycle, what you must not do, and how\nto report**, so a reviewer can check your work quickly.\n\nОбщие правила — соблюдай на каждом шаге:\n## 0. Ground rules (non-negotiable)\n1. **Work on a branch named `bench/<date>-<n>`**, never directly on `main`.\n   Open one pull request per cycle. The owner or a reviewer merges it.\n2. **Never force-push, never rewrite history, never delete labels** you did not\n   create in this cycle.\n3. **Never edit** `packages/core/src/engine.ts` / `lib/score.ts` (the score),\n   `packages/core/src/confidence.ts` (the scale), the `action` package, or the\n   website, unless the task explicitly says so. Scanner files\n   (`packages/core/src/scanners/*.ts`) are in scope.\n4. **Never lower a recall check to make it pass.** If a deliberately vulnerable\n   app loses a true positive, the fix is wrong — revert it.\n5. **No test may be skipped, disabled or loosened** to get green.\n6. **One scanner change = one commit = one regression test**, with a message\n   that names the false-positive cluster it removes.\n7. If you are unsure whether something is a true positive, label nothing and\n   list it under \"Unsure\" in the report.",
+        "prompt": "Задача пользователя: {{input}}\n\nШаг 6 из 9: 1.5 Verify (regression gate)\n\n```\npnpm run build:cli\nBENCH_DROP_CLONES=1 node benchmark/run.mjs <repos with affected findings> <all vulnerable apps>\nnode benchmark/score.mjs --check\n```\n\nPass criteria — **all** must hold, else revert the last fix:\n\n- `score.mjs --check` exits 0. It compares precision on the labels the baseline\n  was measured on, so new honest labels never fail it; it prints how much they\n  moved the measured precision. Report that shift, do not \"fix\" it by\n  relabelling or by narrowing rules without a real false-positive cluster.\n- \"lost TP\" did not increase.\n- Precision of each changed rule did not drop.\n- Every deliberately vulnerable app keeps its high-confidence true positives\n  (list in `stats.json` → `vulnerableApps`; compare before/after).\n\nИтог предыдущего шага:\n{{prev}}\n\nВыполни этот шаг. В конце ответа — коротко: что сделано, ключевые цифры и факты, что не получилось и почему, что важно для следующих шагов.",
+        "maxTokens": 4000,
+        "temperature": 0.3
+      }
+    },
+    {
+      "id": "s7",
+      "kind": "agent",
+      "label": "1.6 Refresh and ship",
+      "position": {
+        "x": 0,
+        "y": 170
+      },
+      "config": {
+        "model": "@smart",
+        "tools": [
+          "files_read",
+          "files_write",
+          "code",
+          "terminal",
+          "web"
+        ],
+        "systemPrompt": "Ты выполняешь порядок действий «Benchmark routine — runbook for an autonomous agent» по шагам: на каждом шаге — только свой шаг, работая инструментами в рабочей папке (команды, файлы, поиск). Не выдумывай результаты команд — запускай их и опирайся на реальный вывод. Если шаг выполнить нельзя (нет доступа, нет данных) — так и напиши, с причиной.\n\nВводная часть документа:\nYou are taking over the recurring benchmark loop of repo-janitor. Read\n`benchmark/WORKFLOW.md` once first (commands, confidence model, environment\ngotchas). This file says **what to do every cycle, what you must not do, and how\nto report**, so a reviewer can check your work quickly.\n\nОбщие правила — соблюдай на каждом шаге:\n## 0. Ground rules (non-negotiable)\n1. **Work on a branch named `bench/<date>-<n>`**, never directly on `main`.\n   Open one pull request per cycle. The owner or a reviewer merges it.\n2. **Never force-push, never rewrite history, never delete labels** you did not\n   create in this cycle.\n3. **Never edit** `packages/core/src/engine.ts` / `lib/score.ts` (the score),\n   `packages/core/src/confidence.ts` (the scale), the `action` package, or the\n   website, unless the task explicitly says so. Scanner files\n   (`packages/core/src/scanners/*.ts`) are in scope.\n4. **Never lower a recall check to make it pass.** If a deliberately vulnerable\n   app loses a true positive, the fix is wrong — revert it.\n5. **No test may be skipped, disabled or loosened** to get green.\n6. **One scanner change = one commit = one regression test**, with a message\n   that names the false-positive cluster it removes.\n7. If you are unsure whether something is a true positive, label nothing and\n   list it under \"Unsure\" in the report.",
+        "prompt": "Задача пользователя: {{input}}\n\nШаг 7 из 9: 1.6 Refresh and ship\n\n```\nnode benchmark/score.mjs --update\npnpm --filter ./packages/core build && node benchmark/rescore.mjs   # confidence → scores, no rescan\nnode benchmark/history.mjs\nnode benchmark/stats.mjs\nnode benchmark/archive.mjs pack && node benchmark/archive.mjs push\npnpm test && npx tsc --noEmit -p . && npx eslint . && pnpm run build:packages\ngit checkout benchmark/REPORT.md   # unless you mean to commit it\n```\n\nИтог предыдущего шага:\n{{prev}}\n\nВыполни этот шаг. В конце ответа — коротко: что сделано, ключевые цифры и факты, что не получилось и почему, что важно для следующих шагов.",
+        "maxTokens": 4000,
+        "temperature": 0.3
+      }
+    },
+    {
+      "id": "s8",
+      "kind": "agent",
+      "label": "1.7 Bring every result up to date",
+      "position": {
+        "x": 0,
+        "y": 340
+      },
+      "config": {
+        "model": "@smart",
+        "tools": [
+          "files_read",
+          "files_write",
+          "code",
+          "terminal",
+          "web"
+        ],
+        "systemPrompt": "Ты выполняешь порядок действий «Benchmark routine — runbook for an autonomous agent» по шагам: на каждом шаге — только свой шаг, работая инструментами в рабочей папке (команды, файлы, поиск). Не выдумывай результаты команд — запускай их и опирайся на реальный вывод. Если шаг выполнить нельзя (нет доступа, нет данных) — так и напиши, с причиной.\n\nВводная часть документа:\nYou are taking over the recurring benchmark loop of repo-janitor. Read\n`benchmark/WORKFLOW.md` once first (commands, confidence model, environment\ngotchas). This file says **what to do every cycle, what you must not do, and how\nto report**, so a reviewer can check your work quickly.\n\nОбщие правила — соблюдай на каждом шаге:\n## 0. Ground rules (non-negotiable)\n1. **Work on a branch named `bench/<date>-<n>`**, never directly on `main`.\n   Open one pull request per cycle. The owner or a reviewer merges it.\n2. **Never force-push, never rewrite history, never delete labels** you did not\n   create in this cycle.\n3. **Never edit** `packages/core/src/engine.ts` / `lib/score.ts` (the score),\n   `packages/core/src/confidence.ts` (the scale), the `action` package, or the\n   website, unless the task explicitly says so. Scanner files\n   (`packages/core/src/scanners/*.ts`) are in scope.\n4. **Never lower a recall check to make it pass.** If a deliberately vulnerable\n   app loses a true positive, the fix is wrong — revert it.\n5. **No test may be skipped, disabled or loosened** to get green.\n6. **One scanner change = one commit = one regression test**, with a message\n   that names the false-positive cluster it removes.\n7. If you are unsure whether something is a true positive, label nothing and\n   list it under \"Unsure\" in the report.",
+        "prompt": "Задача пользователя: {{input}}\n\nШаг 8 из 9: 1.7 Bring every result up to date (before opening the PR)\n\nRerunning only \"repos with affected findings\" is not enough: a scanner change\nmakes that scanner's result stale in **every** repo that has its input files,\nand the next cycle would start from mixed versions. The scan system knows\nexactly what is stale, so let it decide:\n\n```\npnpm run build:cli && pnpm --filter ./packages/core build\nBENCH_DROP_CLONES=1 node benchmark/resume.mjs   # per-scanner fingerprints; reruns only stale scanners\nnode benchmark/osv.mjs                          # online pass (vulnerable-deps, license-risk) for new repos\n```\n\n- Both are resumable: if a run stops (time limit, network), start it again.\n- `resume.mjs` prints its plan first (`partial: <scanner> ×N`); report it.\n- Then redo 1.5 (gate) and 1.6 (refresh, archive) on the complete data.\n- The PR is finished only when `resume.mjs` reports nothing left to scan and\n  `osv.mjs` reports \"all repos checked\". Say so in the report; do not leave\n  \"unaffected results were reused\" as an open item.\n- Publish the archive to `bench-data` (fast-forward only) after the source PR\n  merges; a separate `bench-data-<date>` staging branch is fine before that,\n  and is deleted once promoted.\n\nИтог предыдущего шага:\n{{prev}}\n\nВыполни этот шаг. В конце ответа — коротко: что сделано, ключевые цифры и факты, что не получилось и почему, что важно для следующих шагов.",
+        "maxTokens": 4000,
+        "temperature": 0.3
+      }
+    },
+    {
+      "id": "s9",
+      "kind": "agent",
+      "label": "Random layer draws",
+      "position": {
+        "x": 300,
+        "y": 340
+      },
+      "config": {
+        "model": "@smart",
+        "tools": [
+          "files_read",
+          "files_write",
+          "code",
+          "terminal",
+          "web"
+        ],
+        "systemPrompt": "Ты выполняешь порядок действий «Benchmark routine — runbook for an autonomous agent» по шагам: на каждом шаге — только свой шаг, работая инструментами в рабочей папке (команды, файлы, поиск). Не выдумывай результаты команд — запускай их и опирайся на реальный вывод. Если шаг выполнить нельзя (нет доступа, нет данных) — так и напиши, с причиной.\n\nВводная часть документа:\nYou are taking over the recurring benchmark loop of repo-janitor. Read\n`benchmark/WORKFLOW.md` once first (commands, confidence model, environment\ngotchas). This file says **what to do every cycle, what you must not do, and how\nto report**, so a reviewer can check your work quickly.\n\nОбщие правила — соблюдай на каждом шаге:\n## 0. Ground rules (non-negotiable)\n1. **Work on a branch named `bench/<date>-<n>`**, never directly on `main`.\n   Open one pull request per cycle. The owner or a reviewer merges it.\n2. **Never force-push, never rewrite history, never delete labels** you did not\n   create in this cycle.\n3. **Never edit** `packages/core/src/engine.ts` / `lib/score.ts` (the score),\n   `packages/core/src/confidence.ts` (the scale), the `action` package, or the\n   website, unless the task explicitly says so. Scanner files\n   (`packages/core/src/scanners/*.ts`) are in scope.\n4. **Never lower a recall check to make it pass.** If a deliberately vulnerable\n   app loses a true positive, the fix is wrong — revert it.\n5. **No test may be skipped, disabled or loosened** to get green.\n6. **One scanner change = one commit = one regression test**, with a message\n   that names the false-positive cluster it removes.\n7. If you are unsure whether something is a true positive, label nothing and\n   list it under \"Unsure\" in the report.",
+        "prompt": "Задача пользователя: {{input}}\n\nШаг 9 из 9: Random layer draws\n\n`random-layer.mjs draw` uses GitHub search. With `GITHUB_TOKEN` (or\n`GITHUB_SEARCH_TOKEN`, no scopes needed) it runs 3x faster, but Node must go\nthrough the environment's proxy or the token is rejected (HTTP 401):\n\n```\nNODE_USE_ENV_PROXY=1 NODE_EXTRA_CA_CERTS=/root/.ccr/ca-bundle.crt \\\n  node benchmark/random-layer.mjs draw --n <total>\nnode benchmark/random-layer.mjs apply\n```\n\nDelete `AGENTS.md` / `CLAUDE.md` at the repo root if `next dev` created them.\nPush the branch, open the PR with the report below as its body.\n\nИтог предыдущего шага:\n{{prev}}\n\nВыполни этот шаг. В конце ответа — коротко: что сделано, ключевые цифры и факты, что не получилось и почему, что важно для следующих шагов.",
+        "maxTokens": 4000,
+        "temperature": 0.3
+      }
+    },
+    {
+      "id": "report",
+      "kind": "agent",
+      "label": "Отчёт",
+      "position": {
+        "x": 600,
+        "y": 340
+      },
+      "config": {
+        "model": "@smart",
+        "tools": [
+          "files_read",
+          "code"
+        ],
+        "prompt": "Задача пользователя: {{input}}\n\nРезультаты шагов:\n\n### 0.5 Tracks\n{{0.5 Tracks}}\n\n### 1.1 Add repos\n{{1.1 Add repos}}\n\n### 1.2 Scan\n{{1.2 Scan}}\n\n### 1.3 Label\n{{1.3 Label}}\n\n### 1.4 Fix false-positive clusters\n{{1.4 Fix false-positive clusters}}\n\n### 1.5 Verify\n{{1.5 Verify}}\n\n### 1.6 Refresh and ship\n{{1.6 Refresh and ship}}\n\n### 1.7 Bring every result up to date\n{{1.7 Bring every result up to date}}\n\n### Random layer draws\n{{Random layer draws}}\n\nСоставь итоговый отчёт строго по шаблону из документа, заполни каждый раздел реальными данными из результатов шагов. Чего нет в результатах — пиши «нет данных», не выдумывай:\n\n```\n## Cycle <date>-<n>\n\nCorpus: <before> → <after> repos. Failed to clone: <list or none>.\nThemes added: <one line>.\n\n### Labels\nNew: <n> (tp <a>, fp <b>). Unsure: <list of finding ids with one-line reason>.\n\n### Fixes\n| rule | cluster (why fp) | fp removed | test | commit |\n|---|---|---|---|---|\n\n### Regression gate\n- score --check: pass/fail\n- lost TP: <before> → <after>\n- precision by confidence: high <x>% → <y>%, medium …, low …\n- vulnerable apps: <n> checked, high TP before/after <a>/<b> (list any change)\n- up to date: resume plan <partial: …>, now nothing stale; osv: all repos checked\n\n### Not done / open questions\n<anything skipped and why>\n```",
+        "maxTokens": 6000,
+        "temperature": 0.2
+      }
+    },
+    {
+      "id": "check",
+      "kind": "validator",
+      "label": "Проверка отчёта",
+      "position": {
+        "x": 900,
+        "y": 340
+      },
+      "config": {
+        "model": "@smart",
+        "criteria": "Отчёт должен пройти проверку из документа:\n1. Report sections all filled; numbers match `REPORT.md` / `baseline.json` diff.\n2. Each scanner diff is narrow and has a test that would fail without it.\n3. Spot-check 10 random new labels (`git diff benchmark/labels`) against source.\n4. `lost TP` and vulnerable-app TPs unchanged or up.\n5. No edits outside the allowed files (`git diff --stat main`).",
+        "maxAttempts": 1
+      }
+    },
+    {
+      "id": "save",
+      "kind": "write",
+      "label": "Сохранить отчёт",
+      "position": {
+        "x": 900,
+        "y": 510
+      },
+      "config": {
+        "path": "benchmark/cycle-report.md"
+      }
+    },
+    {
+      "id": "out",
+      "kind": "output",
+      "label": "Результат",
+      "position": {
+        "x": 600,
+        "y": 510
+      },
+      "config": {
+        "template": "{{Отчёт}}"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "e_in_s1",
+      "source": "in",
+      "target": "s1",
+      "sourceHandle": null
+    },
+    {
+      "id": "e_s1_s2",
+      "source": "s1",
+      "target": "s2",
+      "sourceHandle": null
+    },
+    {
+      "id": "e_s2_s3",
+      "source": "s2",
+      "target": "s3",
+      "sourceHandle": null
+    },
+    {
+      "id": "e_s3_s4",
+      "source": "s3",
+      "target": "s4",
+      "sourceHandle": null
+    },
+    {
+      "id": "e_s4_s5",
+      "source": "s4",
+      "target": "s5",
+      "sourceHandle": null
+    },
+    {
+      "id": "e_s5_s6",
+      "source": "s5",
+      "target": "s6",
+      "sourceHandle": null
+    },
+    {
+      "id": "e_s6_s7",
+      "source": "s6",
+      "target": "s7",
+      "sourceHandle": null
+    },
+    {
+      "id": "e_s7_s8",
+      "source": "s7",
+      "target": "s8",
+      "sourceHandle": null
+    },
+    {
+      "id": "e_s8_s9",
+      "source": "s8",
+      "target": "s9",
+      "sourceHandle": null
+    },
+    {
+      "id": "e_s9_report",
+      "source": "s9",
+      "target": "report",
+      "sourceHandle": null
+    },
+    {
+      "id": "e_report_check",
+      "source": "report",
+      "target": "check",
+      "sourceHandle": null
+    },
+    {
+      "id": "e_check_save",
+      "source": "check",
+      "target": "save",
+      "sourceHandle": null
+    },
+    {
+      "id": "e_save_out",
+      "source": "save",
+      "target": "out",
+      "sourceHandle": null
+    }
+  ],
+  "createdAt": "2026-11-12T00:00:00.000Z",
+  "updatedAt": "2026-11-12T00:00:00.000Z",
+  "format": "hephaestus-pipeline@1"
+}

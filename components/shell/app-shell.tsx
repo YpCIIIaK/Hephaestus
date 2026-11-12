@@ -27,12 +27,13 @@ export function BrandMark({ className }: { className?: string }) {
 function useBootstrap() {
   const refresh = useCatalog((s) => s.refresh)
   const loadStatus = useCatalog((s) => s.loadStatus)
-  const fetchedAt = useCatalog((s) => s.fetchedAt)
   const hydrated = useHydrated()
   useEffect(() => {
     if (!hydrated) return
     loadStatus()
-    if (!fetchedAt || Date.now() - fetchedAt > 6 * 3600_000) refresh()
+    // Каталог обновляем при каждом открытии: после обновления приложения или
+    // настроек подписок список моделей меняется (сервер сам кэширует OpenRouter)
+    refresh()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hydrated])
 }

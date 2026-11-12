@@ -1,6 +1,6 @@
 'use client'
 
-import { Check, ChevronDown, Cpu, RefreshCw, Search, Sparkles, Star, Wrench } from 'lucide-react'
+import { Check, ChevronDown, Cpu, Gauge, RefreshCw, Search, Sparkles, Star, Wrench } from 'lucide-react'
 import { useDeferredValue, useMemo, useState } from 'react'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/overlay'
 import { Segmented, Spinner } from '@/components/ui/misc'
@@ -60,7 +60,7 @@ function ModelRow({ m, selected, effort, fav, onPick, onFav }: { m: ModelInfo; s
         </div>
       </div>
       {m.efforts?.length ? (
-        <div className={cn('flex shrink-0 gap-0.5', !selected && 'opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100')}>
+        <div className={cn('flex shrink-0 gap-0.5', !selected && 'opacity-40 group-hover:opacity-100 group-focus-visible:opacity-100')}>
           {m.efforts.map((e) => (
             <button
               key={e}
@@ -199,9 +199,64 @@ export function ModelList({ value, onPick, allowAliases = true, multi }: { value
   )
 }
 
+/**
+ * Усилие рассуждений выбранной модели — отдельным списком рядом с моделью.
+ * Меняет суффикс @уровень в id; у моделей без рассуждений не показывается.
+ */
+export function EffortSelect({ modelId, onChange, size = 'md', className }: { modelId: string; onChange: (id: string) => void; size?: 'xs' | 'sm' | 'md'; className?: string }) {
+  const { id: real } = useResolvedModel(modelId)
+  const models = useCatalog((s) => s.models)
+  const [open, setOpen] = useState(false)
+  // Для роли («Умная») усилие относится к модели, которая за ней стоит, — роль не трогаем
+  if (isAlias(modelId) || !real) return null
+  const { base, effort } = splitEffort(modelId)
+  const efforts = models.find((m) => m.id === base)?.efforts
+  if (!efforts?.length) return null
+  const pick = (e?: Effort) => {
+    setOpen(false)
+    onChange(withEffort(base, e))
+  }
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          title="Усилие рассуждений"
+          className={cn(
+            'inline-flex shrink-0 items-center gap-1 rounded-md font-mono outline-none hover:text-accent focus-visible:ring-2 focus-visible:ring-ring/40',
+            size === 'xs' ? 'px-1 text-[10.5px]' : size === 'sm' ? 'h-8 border border-border bg-surface px-2 text-xs' : 'h-9 border border-border bg-surface px-2.5 text-xs',
+            effort ? 'text-accent' : 'text-muted',
+            className,
+          )}
+        >
+          <Gauge className="size-3 shrink-0" />
+          {effort ? EFFORT_LABELS[effort].short : 'авто'}
+          <ChevronDown className="size-3 shrink-0 text-faint" />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent align="end" className="w-64 p-1">
+        <div className="px-2 pb-1 pt-1.5 text-[11px] font-semibold uppercase tracking-wider text-faint">Усилие рассуждений</div>
+        {[undefined, ...efforts].map((e) => (
+          <button
+            key={e ?? 'auto'}
+            type="button"
+            onClick={() => pick(e)}
+            className={cn('flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[13px] hover:bg-surface-2', effort === e && 'bg-accent-soft')}
+          >
+            <span className="w-11 shrink-0 font-mono text-xs">{e ? EFFORT_LABELS[e].short : 'авто'}</span>
+            <span className="min-w-0 flex-1 text-xs text-muted">{e ? EFFORT_LABELS[e].title : 'По умолчанию модели'}</span>
+            {effort === e && <Check className="size-3.5 shrink-0 text-accent" />}
+          </button>
+        ))}
+      </PopoverContent>
+    </Popover>
+  )
+}
+
 export function ModelPicker({ value, onChange, allowAliases = true, className, placeholder = 'Выбрать модель', size = 'md', align = 'start' }: { value: string; onChange: (id: string) => void; allowAliases?: boolean; className?: string; placeholder?: string; size?: 'sm' | 'md'; align?: 'start' | 'end' }) {
   const [open, setOpen] = useState(false)
   return (
+    <div className="flex w-full min-w-0 items-center gap-1.5">
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
         <button
@@ -227,5 +282,7 @@ export function ModelPicker({ value, onChange, allowAliases = true, className, p
         />
       </PopoverContent>
     </Popover>
+      {value && <EffortSelect modelId={value} onChange={onChange} size={size} />}
+    </div>
   )
 }

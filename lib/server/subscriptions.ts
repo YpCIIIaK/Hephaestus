@@ -141,7 +141,7 @@ export async function subscriptionModels(openrouter: ModelInfo[] = []): Promise<
   }
   const base = (id: SubscriptionId, name: string, slug: string, efforts: Effort[], extra: Partial<ModelInfo> = {}): ModelInfo => ({
     id: `${id === 'codex' ? CODEX_PREFIX : CLAUDE_CODE_PREFIX}${slug}`,
-    name: `${name} · ${LABELS[id]}`,
+    name: `${name} · подписка`,
     provider: id,
     vendor: id,
     description: DESCRIPTION(id === 'codex' ? 'Codex CLI' : 'Claude Code CLI'),
