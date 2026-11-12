@@ -156,7 +156,53 @@ export function newestFreeModels(catalog: ModelInfo[]): ModelInfo[] {
   return catalog.filter((m) => m.provider === 'openrouter' && m.id.endsWith(':free') && isFreeModel(m)).sort((a, b) => (b.created ?? 0) - (a.created ?? 0))
 }
 
-export function pickAliasModel(alias: ModelAlias, catalog: ModelInfo[], freeOnly = false): string | null {
+/** «anthropic/claude-opus-4.8» ↔ «claude-code/claude-opus-4-8», «openai/gpt-6.1-sol» ↔ «codex/gpt-6.1-sol» */
+export function subscriptionTwin(id: string, catalog: ModelInfo[]): string | null {
+  const { base, effort } = splitEffort(id)
+  let twin: string | null = null
+  const claude = base.match(/^anthropic\/(claude-[a-z0-9.-]+)$/)
+  if (claude) twin = `${CLAUDE_CODE_PREFIX}${claude[1].replace(/\./g, '-')}`
+  const gpt = base.match(/^openai\/([a-z0-9.-]+)$/)
+  if (gpt) twin = `${CODEX_PREFIX}${gpt[1]}`
+  if (!twin || !catalog.some((m) => m.id === twin)) return null
+  return withEffort(twin, nearestEffort(effort, catalog.find((m) => m.id === twin)?.efforts))
+}
+
+/** Ближайший поддерживаемый уровень усилия, не выше запрошенного (max у OpenRouter → xhigh) */
+export function nearestEffort(effort: Effort | undefined, supported: Effort[] | undefined): Effort | undefined {
+  if (!effort || !supported?.length) return undefined
+  if (supported.includes(effort)) return effort
+  const order = EFFORTS.indexOf(effort)
+  return [...supported].filter((e) => EFFORTS.indexOf(e) <= order).sort((a, b) => EFFORTS.indexOf(b) - EFFORTS.indexOf(a))[0] ?? supported[0]
+}
+
+/** Обратно: модель подписки → та же модель у OpenRouter (для запасного пути) */
+export function openrouterTwin(id: string, catalog: ModelInfo[]): string | null {
+  const { base, effort } = splitEffort(id)
+  const p = providerOf(base)
+  if (p !== 'claude-code' && p !== 'codex') return null
+  const slug = upstreamModelId(base)
+  const hit = catalog.find((m) => m.provider === 'openrouter' && !m.id.includes(':') && (p === 'codex' ? m.id === `openai/${slug}` : m.id.startsWith('anthropic/') && m.id.slice(10).replace(/\./g, '-') === slug))
+  if (!hit) return null
+  return withEffort(hit.id, nearestEffort(effort, hit.efforts))
+}
+
+/** Самая сильная модель подписки для роли: Opus/Fable — «Умная», Sonnet — «Основная» */
+function pickSubscription(alias: ModelAlias, catalog: ModelInfo[]): string | null {
+  const subs = catalog.filter((m) => m.provider === 'claude-code' || m.provider === 'codex')
+  if (!subs.length || alias === '@fast') return null
+  const claude = subs.filter((m) => m.provider === 'claude-code' && m.created).sort((a, b) => (b.created ?? 0) - (a.created ?? 0))
+  const family = alias === '@smart' ? /claude-(opus|fable)-/ : /claude-sonnet-/
+  return claude.find((m) => family.test(m.id))?.id ?? subs.find((m) => m.provider === 'codex')?.id ?? null
+}
+
+export function pickAliasModel(alias: ModelAlias, catalog: ModelInfo[], freeOnly = false, subscriptionFirst = false): string | null {
+  // Подписка в приоритете: «Умная» и «Основная» — по подписке; «Быстрая» остаётся дешёвой,
+  // чтобы заголовки и классификация не тратили лимиты подписки
+  if (subscriptionFirst) {
+    const sub = pickSubscription(alias, catalog)
+    if (sub) return sub
+  }
   if (freeOnly) {
     const latest = newestFreeModels(catalog)
     const rank = { '@smart': 0, '@default': 1, '@fast': 2 }[alias]

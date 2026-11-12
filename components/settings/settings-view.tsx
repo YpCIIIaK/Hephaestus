@@ -13,7 +13,7 @@ import { api } from '@/lib/client/llm'
 import { ALIAS_LABELS, pickAliasModel, shortModelName } from '@/lib/models'
 import { usableModels, useCatalog } from '@/lib/stores/catalog'
 import { rehydrateAll } from '@/lib/stores/hydration'
-import { useSettings } from '@/lib/stores/settings'
+import { useSettings, type Settings } from '@/lib/stores/settings'
 import { clearAllPersisted, readAllPersisted, writeAllPersisted } from '@/lib/stores/storage'
 import type { ModelAlias, ServerStatus } from '@/lib/types'
 import { cn, downloadFile, formatRelative, formatTokens } from '@/lib/utils'
@@ -157,6 +157,7 @@ function Models() {
   const aliases = useSettings((s) => s.aliases)
   const setAlias = useSettings((s) => s.setAlias)
   const freeOnly = useSettings((s) => s.freeOnly)
+  const subscriptionFirst = useSettings((s) => s.subscriptionFirst)
   const models = useCatalog((s) => s.models)
   const unavailable = useCatalog((s) => s.unavailable)
   const fetchedAt = useCatalog((s) => s.fetchedAt)
@@ -166,7 +167,7 @@ function Models() {
   return (
     <Section icon={<Sparkles />} title="Роли моделей" description="Агенты, шаблоны и судьи ссылаются на роли, а не на конкретные модели. Поменяйте модель здесь — и она сменится везде.">
       {(Object.keys(ALIAS_LABELS) as ModelAlias[]).map((a) => {
-        const auto = pickAliasModel(a, usableModels(models, unavailable), freeOnly)
+        const auto = pickAliasModel(a, usableModels(models, unavailable), freeOnly, subscriptionFirst)
         const autoInfo = models.find((m) => m.id === auto)
         return (
           <div key={a} className="grid items-center gap-2 sm:grid-cols-[200px_1fr]">
@@ -193,8 +194,63 @@ function Models() {
           {loading ? <Spinner /> : <RefreshCw />} Обновить каталог
         </Button>
       </div>
+      <RoutingSettings />
       <DeciderSettings />
     </Section>
+  )
+}
+
+const SERVICE_FIELDS: { key: keyof Settings['services']; label: string; hint: string; empty: string }[] = [
+  { key: 'title', label: 'Заголовки чатов', hint: 'Короткое название диалога по первому сообщению', empty: 'Быстрая' },
+  { key: 'compaction', label: 'Сжатие контекста', hint: 'Резюме ранней истории, когда диалог не помещается в контекст', empty: 'Сам участник диалога' },
+  { key: 'router', label: 'Маршрутизатор в Кузнице', hint: 'Если в блоке маршрутизатора модель не выбрана', empty: 'Быстрая' },
+  { key: 'validator', label: 'Проверка в Кузнице', hint: 'Если в блоке проверки модель не выбрана', empty: 'Умная' },
+]
+
+/** Подписка в приоритете и модели служебных задач */
+function RoutingSettings() {
+  const subscriptionFirst = useSettings((s) => s.subscriptionFirst)
+  const subscriptionFallback = useSettings((s) => s.subscriptionFallback)
+  const services = useSettings((s) => s.services)
+  const set = useSettings((s) => s.set)
+  return (
+    <div className="space-y-4 border-t border-border pt-4">
+      <label className="flex items-center justify-between gap-4 text-[13px]">
+        <span>
+          Подписка в приоритете
+          <span className="block text-xs text-muted">
+            Модель OpenRouter, у которой есть такая же по подписке (Claude → Claude Code, GPT → Codex), запускается через подписку с тем же усилием. «Умная» и «Основная» в автовыборе — тоже по подписке
+          </span>
+        </span>
+        <Switch checked={subscriptionFirst} onCheckedChange={(v) => set({ subscriptionFirst: v })} />
+      </label>
+      <label className="flex items-center justify-between gap-4 text-[13px]">
+        <span>
+          Запасной путь через OpenRouter
+          <span className="block text-xs text-muted">Подписка не сработала (лимит, нет входа, устаревший CLI) — повторить той же моделью через OpenRouter. Лимиты расходов и «только бесплатные» действуют</span>
+        </span>
+        <Switch checked={subscriptionFallback} onCheckedChange={(v) => set({ subscriptionFallback: v })} />
+      </label>
+      <div className="space-y-3">
+        <div className="text-[13px] font-medium">Служебные модели</div>
+        {SERVICE_FIELDS.map((f) => (
+          <div key={f.key} className="grid gap-2 sm:grid-cols-[200px_1fr] sm:items-center">
+            <div>
+              <div className="text-[13px]">{f.label}</div>
+              <div className="text-xs text-muted">{f.hint}</div>
+            </div>
+            <div className="flex gap-2">
+              <ModelPicker value={services[f.key]} onChange={(id) => set({ services: { ...services, [f.key]: id } })} placeholder={`По умолчанию: ${f.empty}`} />
+              {services[f.key] && (
+                <Button variant="ghost" onClick={() => set({ services: { ...services, [f.key]: '' } })}>
+                  Сброс
+                </Button>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
   )
 }
 

@@ -83,7 +83,8 @@ export function resolveModelId(id: string): string | null {
   const chosen = useSettings.getState().aliases[id as ModelAlias]
   if (chosen) return chosen
   const { models, unavailable } = useCatalog.getState()
-  return pickAliasModel(id as ModelAlias, usableModels(models, unavailable), useSettings.getState().freeOnly)
+  const s = useSettings.getState()
+  return pickAliasModel(id as ModelAlias, usableModels(models, unavailable), s.freeOnly, s.subscriptionFirst)
 }
 
 export function useResolvedModel(id: string): { id: string | null; info?: ModelInfo } {
@@ -91,7 +92,8 @@ export function useResolvedModel(id: string): { id: string | null; info?: ModelI
   const models = useCatalog((s) => s.models)
   const unavailable = useCatalog((s) => s.unavailable)
   const freeOnly = useSettings((s) => s.freeOnly)
+  const subscriptionFirst = useSettings((s) => s.subscriptionFirst)
   if (!isAlias(id)) return { id, info: findIn(models, id) }
-  const real = aliases[id as ModelAlias] || pickAliasModel(id as ModelAlias, usableModels(models, unavailable), freeOnly)
+  const real = aliases[id as ModelAlias] || pickAliasModel(id as ModelAlias, usableModels(models, unavailable), freeOnly, subscriptionFirst)
   return { id: real, info: real ? findIn(models, real) : undefined }
 }

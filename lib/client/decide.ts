@@ -42,3 +42,9 @@ export function getDecider(): DecideCall | undefined {
     return result
   }
 }
+
+/** Модели по умолчанию для маршрутизатора и проверки Кузницы — из «Служебных моделей» */
+export function pipelineDefaults(): { router: string; validator: string } {
+  const { services } = useSettings.getState()
+  return { router: services.router || '@fast', validator: services.validator || '@smart' }
+}

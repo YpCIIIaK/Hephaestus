@@ -118,6 +118,8 @@ export interface PipelineDeps {
   decide?: DecideCall
   tool: (name: string, args: Record<string, unknown>, signal?: AbortSignal) => Promise<{ ok: boolean; output: string }>
   getAgent: (id: string) => Agent | undefined
+  /** Модели по умолчанию для маршрутизатора и проверки, если в узле модель не выбрана */
+  defaults?: { router?: string; validator?: string }
 }
 
 export interface PipelineHooks {
@@ -472,7 +474,7 @@ export async function runPipeline(
         const list = routes.map((r, i) => `${i + 1}. ${r.label}${r.keywords ? ` — ${r.keywords}` : ''}`).join('\n')
         const res = await deps.llm(
           {
-            model: node.config.model || '@fast',
+            model: node.config.model || deps.defaults?.router || '@fast',
             temperature: 0,
             maxTokens: 300,
             jsonMode: true,
@@ -533,7 +535,7 @@ export async function runPipeline(
           }
           const res = await deps.llm(
             {
-              model: node.config.model || '@smart',
+              model: node.config.model || deps.defaults?.validator || '@smart',
               temperature: 0,
               maxTokens: 800,
               jsonMode: true,

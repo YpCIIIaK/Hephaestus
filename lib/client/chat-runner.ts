@@ -11,7 +11,7 @@ import { usePipelines } from '../stores/pipelines'
 import { useSettings } from '../stores/settings'
 import type { LLMEvent, ToolsetId, ToolTrace } from '../types'
 import { uid } from '../utils'
-import { getDecider } from './decide'
+import { getDecider, pipelineDefaults } from './decide'
 import { api, callLLM, callLLMSafe, callTool, needsScratchCopy } from './llm'
 
 // Логика чата: параллельные ответы участников, судья, автозаголовок.
@@ -117,7 +117,7 @@ async function runTarget(conv: Conversation, turnIndex: number, target: ChatTarg
     const run = await runPipeline(
       pipeline,
       userContent(turn, key),
-      { llm: callLLMSafe, tool: callTool, getAgent, decide: getDecider() },
+      { llm: callLLMSafe, tool: callTool, getAgent, decide: getDecider(), defaults: pipelineDefaults() },
       {
         onNode: (nodeId, p) => {
           usePipelines.getState().patchNodeRun(runId, nodeId, p)
@@ -299,8 +299,9 @@ export async function discardSandbox(convId: string, turnId: string, key: string
 
 /** Сжимает историю участника и запоминает резюме; true — если получилось */
 async function compactHistory(convId: string, key: string, model: string, plan: NonNullable<ReturnType<typeof compactionPlan>>, signal?: AbortSignal): Promise<boolean> {
+  // Сжимает модель из настроек «Служебные модели», по умолчанию — сам участник
   const res = await callLLM(
-    { model, messages: buildCompactionMessages(plan), temperature: 0.2, maxTokens: 2000 },
+    { model: useSettings.getState().services.compaction || model, messages: buildCompactionMessages(plan), temperature: 0.2, maxTokens: 2000 },
     { signal, meta: { source: 'system', label: 'Сжатие контекста' } },
   )
   if (res.error || res.aborted || !res.text.trim()) return false
@@ -360,7 +361,7 @@ async function autoTitle(convId: string) {
   const first = conv.turns[0].user
   useChats.getState().patch(convId, { title: fallbackTitle(first) })
   if (!useSettings.getState().chat.autoTitle) return
-  const res = await callLLM({ model: '@fast', messages: buildTitleMessages(first), temperature: 0.3, maxTokens: 30 }, { meta: { source: 'system', label: 'Заголовок чата' } })
+  const res = await callLLM({ model: useSettings.getState().services.title || '@fast', messages: buildTitleMessages(first), temperature: 0.3, maxTokens: 30 }, { meta: { source: 'system', label: 'Заголовок чата' } })
   const title = res.error ? null : parseTitle(res.text)
   if (title) useChats.getState().patch(convId, { title })
 }

@@ -13,6 +13,12 @@ export interface Settings {
   freeOnly: boolean
   /** Модель решений (OpenRouter Decisions API) для маршрутизаторов и проверок; платная, включается явно */
   decider: { enabled: boolean; model: string }
+  /** Подписка в приоритете: модель OpenRouter, у которой есть такая же по подписке, запускается через подписку */
+  subscriptionFirst: boolean
+  /** Подписка не сработала (лимит, вход, версия CLI) — повторить через OpenRouter с учётом лимитов расходов */
+  subscriptionFallback: boolean
+  /** Модели служебных задач; пусто — как написано в подсказке у поля */
+  services: { title: string; compaction: string; router: string; validator: string }
   chat: {
     targets: { kind: 'model' | 'agent' | 'pipeline'; id: string }[]
     tools: ToolsetId[]
@@ -40,6 +46,9 @@ export const DEFAULT_SETTINGS: Settings = {
   limits: { dailyUsd: 5, monthlyUsd: 50 },
   freeOnly: false,
   decider: { enabled: false, model: 'perplexity/pplx-decider-v1.2' },
+  subscriptionFirst: true,
+  subscriptionFallback: true,
+  services: { title: '@fast', compaction: '', router: '@fast', validator: '@smart' },
   chat: {
     targets: [{ kind: 'model', id: '@default' }],
     tools: [],
@@ -69,7 +78,7 @@ export const useSettings = create<SettingsStore>()(
       version: 1,
       merge: (persisted, current) => {
         const p = (persisted ?? {}) as Partial<Settings>
-        return { ...current, ...p, chat: { ...current.chat, ...p.chat }, limits: { ...current.limits, ...p.limits }, aliases: { ...current.aliases, ...p.aliases }, decider: { ...current.decider, ...p.decider } }
+        return { ...current, ...p, chat: { ...current.chat, ...p.chat }, limits: { ...current.limits, ...p.limits }, aliases: { ...current.aliases, ...p.aliases }, decider: { ...current.decider, ...p.decider }, services: { ...current.services, ...p.services } }
       },
     },
   ),

@@ -1,7 +1,7 @@
 'use client'
 
 import type { LLMCall, LLMCallOptions } from '../engine/llm'
-import { ALIAS_LABELS, isAlias, isFreeModel, isSubscriptionModel, newestFreeModels, providerOf } from '../models'
+import { ALIAS_LABELS, isAlias, isFreeModel, isSubscriptionModel, newestFreeModels, openrouterTwin, providerOf, subscriptionTwin } from '../models'
 import { NDJSONParser } from '../sse'
 import { modelById, resolveModelId, usableModels, useCatalog } from '../stores/catalog'
 import { useSettings } from '../stores/settings'
@@ -142,7 +142,29 @@ function noteUnavailable(result: LLMResult) {
   }
 }
 
+/**
+ * Подписка в приоритете: модель OpenRouter, у которой есть такая же по
+ * подписке, запускается через подписку (с тем же усилием). Не сработала
+ * подписка — повтор той же моделью через OpenRouter; лимиты расходов и
+ * режим «только бесплатные» при этом действуют как обычно.
+ */
 export const callLLM: LLMCall = async (req, opts = {}) => {
+  const s = useSettings.getState()
+  const { models } = useCatalog.getState()
+  const resolved = resolveModelId(req.model)
+  const twin = resolved && s.subscriptionFirst ? subscriptionTwin(resolved, models) : null
+  const primary = twin ?? resolved
+  if (twin) opts.onEvent?.({ t: 'notice', v: `Через подписку: ${twin}` })
+  const first = await callWithFreeFallback(primary ? { ...req, model: primary } : req, opts)
+  if (!first.error || first.text || opts.signal?.aborted || !primary || !isSubscriptionModel(primary) || !s.subscriptionFallback) return first
+  const backup = twin ? resolved : openrouterTwin(primary, models)
+  if (!backup) return first
+  opts.onEvent?.({ t: 'notice', v: `Подписка не сработала: ${first.error.split('\n')[0].slice(0, 160)}. Повтор через OpenRouter: ${backup}` })
+  const second = await callWithFreeFallback({ ...req, model: backup }, opts)
+  return second.error && !second.text ? { ...second, error: `${first.error}\nЗапасной путь через OpenRouter: ${second.error}` } : second
+}
+
+const callWithFreeFallback: LLMCall = async (req, opts = {}) => {
   const first = await callLLMOnce(req, opts)
   noteUnavailable(first)
   const retryable = first.error && (/429|лимит запросов|перегруз|overload|rate limit|временно недоступ|503/i.test(first.error) || isModelUnavailable(first.error))
