@@ -19,7 +19,7 @@ const PROJECT_TOOLS: ToolsetId[] = ['files_read', 'files_write', 'code', 'termin
 export async function findMemoryFile(): Promise<{ name: string; abs: string; content: string } | null> {
   const root = await getWorkspaceDir()
   for (const name of MEMORY_FILES) {
-    const abs = path.join(root, name)
+    const abs = path.join(/* turbopackIgnore: true */ root, name)
     const content = await fs.readFile(/* turbopackIgnore: true */ abs, 'utf8').catch(() => null)
     if (content != null) return { name, abs, content }
   }
@@ -61,7 +61,7 @@ export async function remember(note: string): Promise<string> {
   if (!clean) throw new Error('Пустая заметка')
   if (clean.length > 1000) throw new Error('Заметка слишком длинная — сократите до сути (до 1000 символов)')
   const existing = await findMemoryFile()
-  const abs = existing?.abs ?? path.join(await getWorkspaceDir(), MEMORY_FILES[0])
+  const abs = existing?.abs ?? path.join(/* turbopackIgnore: true */ await getWorkspaceDir(), MEMORY_FILES[0])
   const name = existing?.name ?? MEMORY_FILES[0]
   return withFileLock(abs, async () => {
     let content = await fs.readFile(/* turbopackIgnore: true */ abs, 'utf8').catch(() => '')

@@ -150,7 +150,7 @@ export async function createSandbox(label: string): Promise<{ id: string; files:
     )
   }
   for (const d of LINKED_DIRS) {
-    const src = path.join(project, d)
+    const src = path.join(/* turbopackIgnore: true */ project, d)
     if (await fs.stat(/* turbopackIgnore: true */ src).then((s) => s.isDirectory(), () => false)) {
       await fs.symlink(src, path.join(tree, d), process.platform === 'win32' ? 'junction' : 'dir').catch(() => {})
     }
