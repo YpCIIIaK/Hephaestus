@@ -76,6 +76,25 @@ describe('подписки: разбор потоков', () => {
   })
 })
 
+describe('подписки: устаревший CLI', () => {
+  it('ошибка API не дублируется текстом ответа и подсказывает «Обновить»', () => {
+    const st = { usage: null, streamedText: false, pendingTools: new Map<string, string>() }
+    const msg = "API Error: 400 Claude Code 2.1.246 does not support this model; version 2.1.280 or newer is required. Run 'claude update'"
+    expect(subs.parseClaudeLine(JSON.stringify({ type: 'assistant', isApiErrorMessage: true, message: { model: '<synthetic>', content: [{ type: 'text', text: msg }] } }), st)).toEqual([])
+    subs.parseClaudeLine(JSON.stringify({ type: 'result', subtype: 'success', is_error: true, result: msg }), st)
+    expect((st as { error?: string }).error).toBe(msg)
+    expect(subs.explain('claude-code', msg)).toContain('«Обновить»')
+  })
+
+  it('сравнение версий CLI', () => {
+    expect(subs.parseVersion('2.1.246 (Claude Code)')).toEqual([2, 1, 246])
+    expect(subs.parseVersion('codex-cli 0.167.2')).toEqual([0, 167, 2])
+    expect(subs.isOlder([2, 1, 246], [2, 1, 322])).toBe(true)
+    expect(subs.isOlder([2, 2, 0], [2, 1, 322])).toBe(false)
+    expect(subs.isOlder([2, 1, 322], [2, 1, 322])).toBe(false)
+  })
+})
+
 describe('подписки: запуск через CLI', () => {
   it('Claude Code: текст кусочками, инструменты, расход без денег', async () => {
     const bin = await fakeCli('claude', [
@@ -136,7 +155,7 @@ describe('подписки: запуск через CLI', () => {
     await saveServerSettings({ subscriptions: { codex: { enabled: true, bin: failing } } })
     const bad = await collect({ model: 'codex/default', messages: [{ role: 'user', content: 'x' }] })
     const err = bad.find((e) => e.t === 'error') as { message: string }
-    expect(err.message).toContain('codex login')
+    expect(err.message).toContain('«Войти в подписку»')
   })
 
   it('имя модели с символами оболочки отклоняется', async () => {

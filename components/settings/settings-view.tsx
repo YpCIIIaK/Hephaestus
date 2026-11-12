@@ -494,6 +494,8 @@ interface SubAuthView {
   id: 'claude-code' | 'codex'
   installed: boolean
   version: string | null
+  latest?: string | null
+  outdated?: boolean
   loggedIn: boolean | null
   detail?: string
   job: AuthJobView | null
@@ -555,6 +557,7 @@ function SubscriptionAuth({ id, onChanged }: { id: 'claude-code' | 'codex'; onCh
         ) : (
           <StatusPill ok={false} label="CLI не установлен" />
         )}
+        {view.outdated && <span className="text-xs text-warning">доступна версия {view.latest} — новые модели требуют свежий CLI</span>}
         <span className="flex-1" />
         {!view.installed && (
           <Button size="sm" variant="primary" disabled={running} onClick={() => void act('install')}>
@@ -572,7 +575,7 @@ function SubscriptionAuth({ id, onChanged }: { id: 'claude-code' | 'codex'; onCh
           </Button>
         )}
         {view.installed && (
-          <Button size="sm" variant="ghost" disabled={running} onClick={() => void act('install')} title="Обновить CLI до последней версии">
+          <Button size="sm" variant={view.outdated ? 'primary' : 'ghost'} disabled={running} onClick={() => void act('install')} title="Обновить CLI до последней версии">
             <RefreshCw /> Обновить
           </Button>
         )}

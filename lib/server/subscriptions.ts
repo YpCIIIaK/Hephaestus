@@ -287,7 +287,9 @@ export function parseClaudeLine(line: string, st: ParseState): LLMEvent[] {
       } else if (d.type === 'thinking_delta' && d.thinking) out.push({ t: 'reasoning', v: str(d.thinking) })
     }
   } else if (e.type === 'assistant') {
-    for (const block of (obj(e.message).content as unknown[]) ?? []) {
+    // Сообщение об ошибке API Claude Code шлёт как «ответ» — это не текст модели, ошибка придёт в result
+    const synthetic = e.isApiErrorMessage === true || obj(e.message).model === '<synthetic>'
+    for (const block of synthetic ? [] : ((obj(e.message).content as unknown[]) ?? [])) {
       const b = obj(block)
       if (b.type === 'tool_use') {
         const id = str(b.id)
@@ -349,12 +351,41 @@ export function parseCodexLine(line: string, st: ParseState): LLMEvent[] {
   return out
 }
 
-function explain(id: SubscriptionId, error: string): string {
-  const hint =
-    id === 'codex'
-      ? 'Войдите в подписку: выполните `codex login` в терминале на этом компьютере'
-      : 'Войдите в подписку: запустите `claude` в терминале на этом компьютере и выполните /login'
-  return /auth|login|log in|401|unauthori|credential|api key/i.test(error) ? `${error}\n${hint}` : error
+export function explain(id: SubscriptionId, error: string): string {
+  if (/does not support this model|or newer is required|claude update|codex update|please update|upgrade (codex|claude)/i.test(error)) {
+    return `${error}\nCLI устарел для этой модели: Настройки → Подписки → «Обновить» (ставит последнюю версию, перезапуск не нужен)`
+  }
+  if (/auth|login|log in|401|unauthori|credential|api key/i.test(error)) return `${error}\nНужен вход в подписку: Настройки → Подписки → «Войти в подписку»`
+  return error
+}
+
+/** «2.1.322 (Claude Code)», «codex-cli 0.167.2» → [2, 1, 322] */
+export function parseVersion(text: string | null | undefined): number[] | null {
+  const m = text?.match(/(\d+)\.(\d+)\.(\d+)/)
+  return m ? m.slice(1, 4).map(Number) : null
+}
+
+export function isOlder(a: number[], b: number[]): boolean {
+  for (let i = 0; i < 3; i++) if (a[i] !== b[i]) return a[i] < b[i]
+  return false
+}
+
+const PACKAGES: Record<SubscriptionId, string> = { 'claude-code': '@anthropic-ai/claude-code', codex: '@openai/codex' }
+const latestCache = new Map<SubscriptionId, { at: number; version: string | null }>()
+
+/** Последняя версия CLI в npm — чтобы подсказать обновление, пока новые модели не начали отказывать */
+export async function latestCliVersion(id: SubscriptionId): Promise<string | null> {
+  const hit = latestCache.get(id)
+  if (hit && Date.now() - hit.at < 6 * 3600_000) return hit.version
+  let version: string | null = null
+  try {
+    const res = await fetch(`https://registry.npmjs.org/${PACKAGES[id].replace('/', '%2F')}/latest`, { signal: AbortSignal.timeout(8000) })
+    if (res.ok) version = ((await res.json()) as { version?: string }).version ?? null
+  } catch {
+    version = hit?.version ?? null
+  }
+  latestCache.set(id, { at: Date.now(), version })
+  return version
 }
 
 /** На Windows CLI запускаются через cmd.exe: путь с пробелами берём в кавычки */

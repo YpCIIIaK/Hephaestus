@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import { errorMessage, jsonError, parseBody, rejectCrossSite } from '@/lib/server/http'
 import { AuthError, cancelJob, getJob, loginStatus, sendCode, startJob } from '@/lib/server/subscription-auth'
-import { cliVersion, subscriptionConfig } from '@/lib/server/subscriptions'
+import { cliVersion, isOlder, latestCliVersion, parseVersion, subscriptionConfig } from '@/lib/server/subscriptions'
 
 export const dynamic = 'force-dynamic'
 
@@ -17,7 +17,11 @@ export async function GET() {
       const version = await cliVersion(cfg.bin)
       const job = getJob(id)
       const status = version.version && job?.state !== 'running' ? await loginStatus(id) : { loggedIn: null }
-      return { id, installed: !!version.version, version: version.version, ...status, job }
+      const latest = version.version ? await latestCliVersion(id) : null
+      const have = parseVersion(version.version)
+      const newest = parseVersion(latest)
+      const outdated = !!(have && newest && isOlder(have, newest))
+      return { id, installed: !!version.version, version: version.version, latest, outdated, ...status, job }
     }),
   )
   return NextResponse.json({ subscriptions: list })
