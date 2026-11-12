@@ -14,6 +14,7 @@ import { effectiveAgentConfig, NODE_META, type NodeConfig, type NodeRun, type Pi
 import { getAgent, useAllAgents } from '@/lib/stores/agents'
 import { uid } from '@/lib/utils'
 import { NODE_STYLE } from './node-meta'
+import { SandboxChanges } from './sandbox-changes'
 
 function VarChips({ pipeline, node, onInsert }: { pipeline: Pipeline; node: PipelineNode; onInsert: (v: string) => void }) {
   // Предлагаем узлы, которые выполняются раньше текущего
@@ -103,6 +104,15 @@ function AgentFields({ node, set, pipeline }: { node: PipelineNode; set: (p: Par
         </span>
         <Switch checked={!!c.jsonMode} onCheckedChange={(v) => set({ jsonMode: v })} />
       </label>
+      {node.kind === 'agent' && (
+        <label className="flex items-center justify-between gap-3 text-[13px]">
+          <span>
+            Своя копия проекта
+            <span className="block text-xs text-muted">Правит копию, а не оригинал. После запуска — список изменений, diff и «Применить к проекту». Команды и проверки после этого блока выполняются в его копии</span>
+          </span>
+          <Switch checked={!!c.isolate} onCheckedChange={(v) => set({ isolate: v })} />
+        </label>
+      )}
       <FieldRow label="Запасные модели" hint="Если основная упадёт, по очереди попробуем эти">
         <div className="space-y-1.5">
           {(c.fallbackModels ?? []).map((m, i) => (
@@ -122,11 +132,84 @@ function AgentFields({ node, set, pipeline }: { node: PipelineNode; set: (p: Par
   )
 }
 
+/** Где выполнить команду: в проекте или в копии блока со «своей копией» */
+function SandboxSource({ node, pipeline, set }: { node: PipelineNode; pipeline: Pipeline; set: (p: Partial<NodeConfig>) => void }) {
+  const isolated = pipeline.nodes.filter((n) => n.kind === 'agent' && n.config.isolate)
+  if (!isolated.length) return null
+  return (
+    <FieldRow label="Где выполнять" hint="По умолчанию — в копии входящего блока, если она у него есть, иначе в проекте">
+      <NativeSelect value={node.config.sandboxFrom ?? ''} onChange={(e) => set({ sandboxFrom: e.target.value || undefined })}>
+        <option value="">Автоматически</option>
+        {isolated.map((n) => (
+          <option key={n.id} value={n.id}>
+            В копии блока «{n.label}»
+          </option>
+        ))}
+      </NativeSelect>
+    </FieldRow>
+  )
+}
+
 function ConfigFields({ node, pipeline, set }: { node: PipelineNode; pipeline: Pipeline; set: (p: Partial<NodeConfig>) => void }) {
   const c = node.config
   switch (node.kind) {
     case 'input':
       return <p className="text-sm leading-relaxed text-muted">Сюда попадает запрос, с которым запускают пайплайн. В шаблонах других узлов он доступен как <code className="font-mono text-accent">{'{{input}}'}</code>.</p>
+    case 'command':
+      return (
+        <>
+          <TemplateField
+            label="Команда"
+            hint="Выполняется в терминале рабочей папки (нужен «Полный доступ»). Можно подставлять выходы блоков. Вывод команды — выход блока"
+            value={c.command ?? ''}
+            onChange={(v) => set({ command: v })}
+            pipeline={pipeline}
+            node={node}
+            rows={3}
+            placeholder="npx semgrep scan --config auto --json > audit/semgrep.json; cat audit/semgrep.json"
+          />
+          <div className="grid grid-cols-2 gap-3">
+            <FieldRow label="Папка" hint="Подпапка или @tools/…">
+              <Input value={c.cwd ?? ''} onChange={(e) => set({ cwd: e.target.value || undefined })} placeholder="корень" className="font-mono" />
+            </FieldRow>
+            <FieldRow label="Лимит, секунд" hint="Не больше лимита из настроек">
+              <Input type="number" min={5} max={1800} value={c.timeoutSec ?? ''} onChange={(e) => set({ timeoutSec: Number(e.target.value) || undefined })} placeholder="из настроек" />
+            </FieldRow>
+          </div>
+          <label className="flex items-center justify-between gap-3 text-[13px]">
+            <span>
+              Ошибка — не ошибка
+              <span className="block text-xs text-muted">Ненулевой код выхода не останавливает ветку (сканеры часто так сообщают о находках)</span>
+            </span>
+            <Switch checked={!!c.allowFail} onCheckedChange={(v) => set({ allowFail: v })} />
+          </label>
+          <SandboxSource node={node} pipeline={pipeline} set={set} />
+        </>
+      )
+    case 'foreach':
+      return (
+        <>
+          <p className="text-[13px] leading-relaxed text-muted">
+            Делит вход на элементы и обрабатывает каждый отдельным вызовом агента, по несколько одновременно. В промпте элемент — <code className="font-mono text-accent">{'{{item}}'}</code>, его номер — <code className="font-mono text-accent">{'{{index}}'}</code>.
+          </p>
+          <div className="grid grid-cols-3 gap-3">
+            <FieldRow label="Деление">
+              <NativeSelect value={c.splitBy ?? 'blocks'} onChange={(e) => set({ splitBy: e.target.value as NodeConfig['splitBy'] })}>
+                <option value="blocks">Разделы и абзацы</option>
+                <option value="lines">Строки</option>
+                <option value="json">Массив JSON</option>
+              </NativeSelect>
+            </FieldRow>
+            <FieldRow label="Не больше">
+              <Input type="number" min={1} max={200} value={c.limit ?? 20} onChange={(e) => set({ limit: Number(e.target.value) || undefined })} />
+            </FieldRow>
+            <FieldRow label="Одновременно">
+              <Input type="number" min={1} max={10} value={c.concurrency ?? 3} onChange={(e) => set({ concurrency: Number(e.target.value) || undefined })} />
+            </FieldRow>
+          </div>
+          <AgentFields node={node} set={set} pipeline={pipeline} />
+        </>
+      )
     case 'agent':
       return <AgentFields node={node} set={set} pipeline={pipeline} />
     case 'search':
@@ -202,15 +285,47 @@ function ConfigFields({ node, pipeline, set }: { node: PipelineNode; pipeline: P
     case 'validator':
       return (
         <>
-          <FieldRow label="Критерии проверки">
-            <Textarea rows={4} value={c.criteria ?? ''} onChange={(e) => set({ criteria: e.target.value })} placeholder="Ответ полный, точный, со ссылками на источники…" />
+          <FieldRow label="Чем проверять">
+            <Segmented
+              size="sm"
+              value={c.checkCommand != null ? 'command' : 'llm'}
+              onChange={(v) => set({ checkCommand: v === 'command' ? (c.checkCommand ?? 'npm test') : undefined })}
+              options={[
+                { value: 'llm', label: 'Моделью по критериям' },
+                { value: 'command', label: 'Командой (код выхода)' },
+              ]}
+            />
           </FieldRow>
+          {c.checkCommand != null ? (
+            <>
+              <TemplateField
+                label="Команда проверки"
+                hint="Прошло — если команда завершилась с кодом 0. Иначе агенты на входе получают конец вывода как замечания и дорабатывают"
+                value={c.checkCommand}
+                onChange={(v) => set({ checkCommand: v })}
+                pipeline={pipeline}
+                node={node}
+                rows={2}
+                placeholder="npm test"
+              />
+              <FieldRow label="Папка" hint="Подпапка или @tools/…; пусто — корень проекта">
+                <Input value={c.cwd ?? ''} onChange={(e) => set({ cwd: e.target.value || undefined })} placeholder="корень" className="font-mono" />
+              </FieldRow>
+              <SandboxSource node={node} pipeline={pipeline} set={set} />
+            </>
+          ) : (
+            <FieldRow label="Критерии проверки">
+              <Textarea rows={4} value={c.criteria ?? ''} onChange={(e) => set({ criteria: e.target.value })} placeholder="Ответ полный, точный, со ссылками на источники…" />
+            </FieldRow>
+          )}
           <FieldRow label={`Доработок максимум · ${c.maxAttempts ?? 2}`} hint="Не прошёл — агенты на входе получают замечания и переписывают ответ">
             <Slider min={1} max={5} step={1} value={[c.maxAttempts ?? 2]} onValueChange={([v]) => set({ maxAttempts: v })} />
           </FieldRow>
-          <FieldRow label="Модель проверяющего">
-            <ModelPicker value={c.model || '@smart'} onChange={(id) => set({ model: id })} />
-          </FieldRow>
+          {c.checkCommand == null && (
+            <FieldRow label="Модель проверяющего">
+              <ModelPicker value={c.model || '@smart'} onChange={(id) => set({ model: id })} />
+            </FieldRow>
+          )}
         </>
       )
   }
@@ -237,6 +352,7 @@ export function NodeOutput({ run }: { run: NodeRun }) {
       {run.prompt && <details className="rounded-xl border border-border p-3"><summary className="cursor-pointer text-xs font-semibold">Запрос модели</summary><div className="mt-2 max-h-64 overflow-y-auto whitespace-pre-wrap break-words text-xs">{run.prompt}</div></details>}
       {run.reasoning && <details className="rounded-xl border border-border p-3"><summary className="cursor-pointer text-xs font-semibold">Рассуждения, переданные моделью</summary><div className="mt-2 max-h-64 overflow-y-auto whitespace-pre-wrap break-words text-xs">{run.reasoning}</div></details>}
       {!!run.tools?.length && <ToolTraceList tools={run.tools} />}
+      {run.sandbox && run.status !== 'running' && <SandboxChanges id={run.sandbox} />}
       {run.error && <div className="rounded-lg border border-danger/25 bg-danger/8 p-2.5 text-[13px] text-danger">{run.error}</div>}
       {run.output && (
         <div className="rounded-xl border border-border bg-surface-2/50 p-3">

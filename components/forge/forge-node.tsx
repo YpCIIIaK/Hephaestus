@@ -28,6 +28,7 @@ function Subtitle({ node }: { node: PipelineNode }) {
         <span className="flex min-w-0 items-center gap-1">
           {agent && <span>{agent.emoji}</span>}
           <ModelName id={c.model || agent?.model || '@default'} showAliasTarget={false} className="min-w-0" />
+          {c.isolate && <span title="Своя копия проекта">· копия</span>}
         </span>
       )
     }
@@ -40,7 +41,17 @@ function Subtitle({ node }: { node: PipelineNode }) {
     case 'router':
       return <span>{c.routerMode === 'keyword' ? 'по ключевым словам' : 'по смыслу'}</span>
     case 'validator':
-      return <span>до {c.maxAttempts ?? 2} доработок</span>
+      return <span>{c.checkCommand != null ? <span className="font-mono">$ {truncate(c.checkCommand, 28)}</span> : `до ${c.maxAttempts ?? 2} доработок`}</span>
+    case 'command':
+      return <span className="truncate font-mono">$ {truncate(c.command || 'команда не задана', 32)}</span>
+    case 'foreach': {
+      const agent = c.agentId ? getAgent(c.agentId) : undefined
+      return (
+        <span className="flex min-w-0 items-center gap-1">
+          ×{c.concurrency ?? 3} · <ModelName id={c.model || agent?.model || '@default'} showAliasTarget={false} className="min-w-0" />
+        </span>
+      )
+    }
     default:
       return <span>{NODE_META[node.kind].hint}</span>
   }

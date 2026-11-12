@@ -206,9 +206,9 @@ export const callLLMSafe: LLMCall = async (req, opts = {}) => {
   }
 }
 
-export async function callTool(name: string, args: Record<string, unknown>, signal?: AbortSignal): Promise<{ ok: boolean; output: string }> {
+export async function callTool(name: string, args: Record<string, unknown>, signal?: AbortSignal, opts: { sandbox?: string } = {}): Promise<{ ok: boolean; output: string }> {
   try {
-    const res = await fetch('/api/tools', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, args }), signal })
+    const res = await fetch('/api/tools', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, args, sandbox: opts.sandbox }), signal })
     const data = (await res.json()) as { ok?: boolean; output?: string; error?: string }
     if (!res.ok) return { ok: false, output: data.error ?? `Ошибка ${res.status}` }
     return { ok: !!data.ok, output: data.output ?? '' }
@@ -227,4 +227,9 @@ export async function api<T>(url: string, init?: RequestInit & { json?: unknown 
   const data = (await res.json().catch(() => ({}))) as T & { error?: string }
   if (!res.ok) throw new Error(data.error ?? `Ошибка ${res.status}`)
   return data
+}
+
+/** Копии проекта для блоков Кузницы со «своей копией» */
+export const pipelineSandbox = {
+  create: async (label: string) => (await api<{ id: string }>('/api/sandboxes', { method: 'POST', json: { action: 'create', label } })).id,
 }

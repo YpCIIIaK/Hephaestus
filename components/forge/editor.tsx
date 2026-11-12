@@ -36,6 +36,8 @@ const nodeTypes = { forge: ForgeNodeView }
 
 const DEFAULT_CONFIG: Partial<Record<NodeKind, PipelineNode['config']>> = {
   agent: { model: '@default' },
+  foreach: { model: '@default', splitBy: 'blocks', limit: 20, concurrency: 3, prompt: 'Элемент {{index}}:\n{{item}}' },
+  command: { command: '', allowFail: false },
   search: { query: '{{input}}', readPages: 0 },
   knowledge: { query: '{{input}}', limit: 5 },
   router: {

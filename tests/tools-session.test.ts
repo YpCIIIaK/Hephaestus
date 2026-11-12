@@ -67,6 +67,28 @@ describe('общая папка инструментов @tools', () => {
   })
 })
 
+describe('команда для блока Кузницы', () => {
+  it('raw — только вывод, ошибка с кодом выхода; в копии проекта видны файлы копии', async () => {
+    const { saveServerSettings } = await import('@/lib/server/settings')
+    const { runTool } = await import('@/lib/server/tools')
+    const { createSandbox, removeSandbox } = await import('@/lib/server/sandboxes')
+    const { POST } = await import('@/app/api/tools/route')
+    await saveServerSettings({ terminal: 'full' })
+    await fs.writeFile(path.join(dir, 'marker.txt'), 'оригинал')
+    expect(await runTool('run_command', { command: 'cat marker.txt', raw: true })).toEqual({ ok: true, output: 'оригинал' })
+    const bad = await runTool('run_command', { command: 'echo упало; exit 3', raw: true })
+    expect(bad).toEqual({ ok: false, output: 'упало\n[код выхода 3]' })
+
+    const { id } = await createSandbox('тест')
+    const call = (body: object) => POST(new Request('http://localhost/api/tools', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }))
+    expect(await (await call({ name: 'run_command', args: { command: 'echo -n копия > marker.txt', raw: true }, sandbox: id })).json()).toMatchObject({ ok: true })
+    expect(await fs.readFile(path.join(dir, 'marker.txt'), 'utf8')).toBe('оригинал') // оригинал не тронут
+    expect(await (await call({ name: 'run_command', args: { command: 'cat marker.txt', raw: true }, sandbox: id })).json()).toEqual({ ok: true, output: 'копия' })
+    await removeSandbox(id)
+    await saveServerSettings({ terminal: 'off' })
+  })
+})
+
 describe('ссылки на репозитории', () => {
   it('принимает https и ssh, ссылку на файл сводит к репозиторию', () => {
     expect(parseRepoUrl('https://github.com/YpCIIIaK/repo-janitor')).toEqual({ url: 'https://github.com/YpCIIIaK/repo-janitor', name: 'repo-janitor' })

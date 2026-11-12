@@ -12,7 +12,7 @@ import { useSettings } from '../stores/settings'
 import type { LLMEvent, ToolsetId, ToolTrace } from '../types'
 import { uid } from '../utils'
 import { getDecider, pipelineDefaults } from './decide'
-import { api, callLLM, callLLMSafe, callTool, needsScratchCopy } from './llm'
+import { api, callLLM, callLLMSafe, callTool, needsScratchCopy, pipelineSandbox } from './llm'
 
 // Логика чата: параллельные ответы участников, судья, автозаголовок.
 
@@ -117,7 +117,7 @@ async function runTarget(conv: Conversation, turnIndex: number, target: ChatTarg
     const run = await runPipeline(
       pipeline,
       userContent(turn, key),
-      { llm: callLLMSafe, tool: callTool, getAgent, decide: getDecider(), defaults: pipelineDefaults() },
+      { llm: callLLMSafe, tool: callTool, getAgent, decide: getDecider(), defaults: pipelineDefaults(), sandbox: pipelineSandbox },
       {
         onNode: (nodeId, p) => {
           usePipelines.getState().patchNodeRun(runId, nodeId, p)

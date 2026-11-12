@@ -222,7 +222,10 @@ export async function runTool(name: string, rawArgs: string | Record<string, unk
       }
       case 'run_command': {
         const r = await runCommand(s('command'), { cwd: s('cwd') || undefined, timeoutSec: n('timeout_sec'), signal })
-        return { ok: !r.timedOut && r.exitCode === 0, output: clip(formatCommandResult(r)) }
+        const ok = !r.timedOut && r.exitCode === 0
+        // raw — для блока «Команда» Кузницы: только вывод, чтобы его можно было разобрать дальше
+        if (args.raw === true) return { ok, output: clip(ok ? r.output : `${r.output.trimEnd()}\n[${r.timedOut ? 'прервана по таймауту' : `код выхода ${r.exitCode}`}]`) }
+        return { ok, output: clip(formatCommandResult(r)) }
       }
       case 'start_process': {
         const r = await startBackground(s('command'), s('cwd') || undefined)
