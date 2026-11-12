@@ -51,7 +51,7 @@ export async function resolveWorkspacePath(input: string): Promise<{ abs: string
   const root = await ensureWorkspace()
   // Модели часто передают абсолютный путь из описания рабочей папки — внутри неё он допустим.
   // Иначе ведущий «/» означает корень проекта: «/src/app.ts» — это src/app.ts.
-  const asAbsolute = path.resolve(raw || '.')
+  const asAbsolute = path.resolve(/* turbopackIgnore: true */ raw || '.')
   const insideAsIs = (path.isAbsolute(raw) || /^[a-zA-Z]:[\\/]/.test(raw)) && isInside(root, asAbsolute)
   const cleaned = raw
     .replace(/\\/g, '/')
