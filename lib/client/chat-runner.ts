@@ -395,8 +395,9 @@ export async function sendMessage(convId: string, text: string, attachments: { n
   void autoTitle(convId)
   const after = getConv(convId)
   const okReplies = after ? Object.values(after.turns[turnIndex]?.replies ?? {}).filter((r) => r.status === 'done' && r.text) : []
-  // Ответы на разные задачи сравнивать бессмысленно
-  if (useSettings.getState().chat.autoJudge && okReplies.length >= 2 && !own) await judgeTurn(convId, turn.id)
+  const judge = after?.judge
+  const auto = judge ? judge.enabled : useSettings.getState().chat.autoJudge
+  if (after && auto && canJudge(after.turns[turnIndex], judge)) await judgeTurn(convId, turn.id)
 }
 
 export async function regenerate(convId: string, turnId: string, key: string) {
@@ -426,12 +427,26 @@ function parseKey(key: string): ChatTarget | null {
   return { kind: key.slice(0, i) as ChatTarget['kind'], id: key.slice(i + 1) }
 }
 
+/**
+ * Можно ли звать судью. Стандартный судья сравнивает ответы на один вопрос —
+ * нужно минимум два. Судья со своей инструкцией делает вывод и по одному
+ * ответу, и по разным задачам.
+ */
+export function canJudge(turn: ChatTurn | undefined, judge: Conversation['judge']): boolean {
+  if (!turn) return false
+  const done = Object.values(turn.replies).filter((r) => r.status === 'done' && r.text.trim()).length
+  if (judge?.instructions.trim()) return done >= 1
+  return !turn.tasks && done >= 2
+}
+
 export async function judgeTurn(convId: string, turnId: string) {
   const conv = getConv(convId)
   const turn = conv?.turns.find((t) => t.id === turnId)
-  if (!conv || !turn || turn.tasks) return
+  if (!conv || !turn || !canJudge(turn, conv.judge)) return
+  const cfg = conv.judge
+  const instructions = cfg?.instructions.trim() ?? ''
+  const ranking = cfg ? cfg.ranking : true
   const entries = Object.entries(turn.replies).filter(([, r]) => r.status === 'done' && r.text.trim())
-  if (entries.length < 2) return
   const keys = entries.map(([k]) => k)
   const replies = await Promise.all(
     entries.map(async ([k, r]) => {
@@ -441,20 +456,27 @@ export async function judgeTurn(convId: string, turnId: string) {
         const d = await sandboxPatch(r.sandbox.id).catch(() => null)
         if (d) text += `\n\n<изменения в файлах>\n${d.patch.slice(0, 12_000)}${d.patch.length > 12_000 || d.truncated ? '\n…[diff обрезан]' : ''}\n</изменения в файлах>`
       }
-      return { key: k, name: describeTarget(parseKey(k)!).name, text }
+      return { key: k, name: describeTarget(parseKey(k)!).name, text, task: turn.tasks?.[k] }
     }),
   )
   const store = useChats.getState()
-  store.setJudge(convId, turnId, { status: 'streaming', ranking: [], synthesis: '', raw: '' })
+  const custom = !!instructions
+  store.setJudge(convId, turnId, { status: 'streaming', ranking: [], synthesis: '', raw: '', custom })
   const ac = track(convId)
   let raw = ''
   const upd = throttled<{ raw: string }>((p) => {
-    const parsed = parseJudge(p.raw, keys)
-    useChats.getState().setJudge(convId, turnId, { status: 'streaming', raw: p.raw, ...parsed })
+    const parsed = parseJudge(p.raw, keys, ranking)
+    useChats.getState().setJudge(convId, turnId, { status: 'streaming', raw: p.raw, custom, ...parsed })
   }, 120)
   try {
     const res = await callLLM(
-      { model: useSettings.getState().chat.judgeModel || '@smart', messages: buildJudgeMessages(userContent(turn), replies), temperature: 0.2, maxTokens: 4000 },
+      {
+        model: cfg?.model || useSettings.getState().chat.judgeModel || '@smart',
+        // В режиме «разные задачи» общего вопроса нет — задачи видны в ответах участников
+        messages: buildJudgeMessages(turn.tasks ? 'У участников разные задачи — они указаны в их ответах.' : userContent(turn), replies, { instructions, ranking }),
+        temperature: 0.2,
+        maxTokens: 4000,
+      },
       {
         signal: ac.signal,
         meta: { source: 'judge', label: 'Судья чата' },
@@ -471,7 +493,7 @@ export async function judgeTurn(convId: string, turnId: string) {
       useChats.getState().setJudge(convId, turnId, undefined)
       return
     }
-    useChats.getState().setJudge(convId, turnId, res.error ? { status: 'error', error: res.error, ranking: [], synthesis: '', raw: res.text } : { status: 'done', raw: res.text, usage: res.usage, ...parseJudge(res.text, keys) })
+    useChats.getState().setJudge(convId, turnId, res.error ? { status: 'error', error: res.error, ranking: [], synthesis: '', raw: res.text, custom } : { status: 'done', raw: res.text, usage: res.usage, custom, ...parseJudge(res.text, keys, ranking) })
   } finally {
     untrack(convId, ac)
   }

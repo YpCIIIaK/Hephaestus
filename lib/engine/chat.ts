@@ -48,8 +48,24 @@ export interface ReplySandbox {
   error?: string
 }
 
+/** Судья диалога: собирает ответы участников и делает вывод по инструкции пользователя */
+export interface ChatJudge {
+  /** Запускать автоматически, когда все участники ответили */
+  enabled: boolean
+  /** Модель судьи; пусто — модель судьи из настроек */
+  model: string
+  /** Инструкция для вывода; пусто — сравнить ответы и собрать лучший */
+  instructions: string
+  /** Выставлять оценки участникам */
+  ranking: boolean
+}
+
+export const DEFAULT_JUDGE: ChatJudge = { enabled: false, model: '', instructions: '', ranking: true }
+
 export interface JudgeResult {
   status: 'streaming' | 'done' | 'error'
+  /** Вывод сделан по инструкции пользователя, а не стандартное «лучший ответ» */
+  custom?: boolean
   ranking: { key: string; score: number; strengths: string; weaknesses: string }[]
   bestKey?: string
   synthesis: string
@@ -93,6 +109,8 @@ export interface Conversation {
   replaced?: Record<string, string>
   /** Режим ввода: у каждого участника своя задача */
   separateTasks?: boolean
+  /** Судья этого диалога; без него — общие настройки автосудьи */
+  judge?: ChatJudge
 }
 
 /** Ключ участника и все, кого он заменил, — от нового к старому */
@@ -295,34 +313,57 @@ export function buildCompactionMessages(plan: { text: string; previous?: string 
 
 // ─── Судья: сравнение ответов ────────────────────────────────────────────
 
-export function buildJudgeMessages(question: string, replies: { key: string; name: string; text: string }[]): LLMMessage[] {
-  const blocks = replies.map((r, i) => `## Ответ ${i + 1} — ${r.name}\n${r.text}`).join('\n\n')
-  return [
-    {
-      role: 'system',
-      content: `Ты — беспристрастный эксперт-судья. Сравни ответы разных ИИ на вопрос пользователя по точности, полноте, полезности и ясности. Не отдавай предпочтение длинным ответам только за длину.
-Формат ответа строго такой:
-1) Сначала блок \`\`\`json с оценками:
+const JUDGE_HONESTY = `Ты сам ничего не запускаешь и не читаешь файлы. Не утверждай результатов запусков, тестов и проверок, которых нет в ответах участников: если участники предлагают правки, но не проверяли их — так и напиши, что их нужно проверить. Если у ответа есть блок <изменения в файлах> — оценивай по нему, что участник на самом деле изменил.`
+
+const RANKING_FORMAT = `Сначала блок \`\`\`json с оценками:
 \`\`\`json
 {"ranking": [{"answer": <номер ответа>, "score": <0-10>, "strengths": "сильные стороны", "weaknesses": "слабые стороны"}], "best": <номер лучшего ответа>}
-\`\`\`
+\`\`\``
+
+/**
+ * Сообщения для судьи. Без инструкции — сравнить ответы и собрать лучший.
+ * С инструкцией пользователя — вывод строго по ней; оценки участникам по желанию.
+ */
+export function buildJudgeMessages(
+  question: string,
+  replies: { key: string; name: string; text: string; task?: string }[],
+  opts: { instructions?: string; ranking?: boolean } = {},
+): LLMMessage[] {
+  const blocks = replies.map((r, i) => `## Ответ ${i + 1} — ${r.name}${r.task ? `\nЗадача участника: ${r.task}` : ''}\n${r.text}`).join('\n\n')
+  const instructions = opts.instructions?.trim()
+  const ranking = opts.ranking ?? true
+  const system = instructions
+    ? `Ты — судья, который собирает ответы нескольких ИИ и делает вывод. Главное — инструкция пользователя ниже: сделай вывод строго по ней.
+<инструкция пользователя>
+${instructions}
+</инструкция пользователя>
+Формат ответа:
+${ranking ? `1) ${RANKING_FORMAT}\n2) Затем заголовок «## Вывод» и вывод по инструкции.` : 'Только вывод по инструкции, без оценок участников и без вступлений.'}
+Опирайся только на ответы участников, называй участника, когда ссылаешься на его ответ. Пиши на языке пользователя.
+${JUDGE_HONESTY}`
+    : `Ты — беспристрастный эксперт-судья. Сравни ответы разных ИИ на вопрос пользователя по точности, полноте, полезности и ясности. Не отдавай предпочтение длинным ответам только за длину.
+Формат ответа строго такой:
+1) ${RANKING_FORMAT}
 2) Затем заголовок «## Итоговый ответ» и лучший возможный ответ на вопрос: объедини сильные стороны всех ответов и исправь их ошибки. Пиши на языке вопроса.
-Ты сам ничего не запускаешь и не читаешь файлы. Не утверждай результатов запусков, тестов и проверок, которых нет в ответах участников: если участники предлагают правки, но не проверяли их — так и напиши, что их нужно проверить. Если у ответа есть блок <изменения в файлах> — оценивай по нему, что участник на самом деле изменил.`,
-    },
+${JUDGE_HONESTY}`
+  return [
+    { role: 'system', content: system },
     { role: 'user', content: `# Вопрос\n${question}\n\n# Ответы\n${blocks}` },
   ]
 }
 
-export function parseJudge(text: string, keys: string[]): Pick<JudgeResult, 'ranking' | 'bestKey' | 'synthesis'> {
+export function parseJudge(text: string, keys: string[], ranking = true): Pick<JudgeResult, 'ranking' | 'bestKey' | 'synthesis'> {
+  // Без оценок весь ответ — вывод: фигурные скобки в нём (код, таблицы) не принимаем за оценки
+  if (!ranking) return { ranking: [], bestKey: undefined, synthesis: text.replace(/^#+\s*(Итоговый ответ|Вывод)\s*/i, '').trim() }
   const j = extractJson<Record<string, unknown>>(text)
   const keyAt = (v: unknown) => keys[Math.round(asNumber(v, 0)) - 1]
-  const ranking = asArray<Record<string, unknown>>(j?.ranking)
+  const scores = asArray<Record<string, unknown>>(j?.ranking)
     .map((r) => ({ key: keyAt(r.answer) ?? '', score: Math.max(0, Math.min(10, asNumber(r.score))), strengths: asString(r.strengths), weaknesses: asString(r.weaknesses) }))
     .filter((r) => r.key)
     .sort((a, b) => b.score - a.score)
   const afterJson = text.replace(/```(?:json)?[\s\S]*?```/i, '').trim()
-  const synthesis = afterJson.replace(/^#+\s*Итоговый ответ\s*/i, '').trim()
-  return { ranking, bestKey: keyAt(j?.best) ?? ranking[0]?.key, synthesis }
+  const synthesis = afterJson.replace(/^#+\s*(Итоговый ответ|Вывод)\s*/i, '').trim()
+  return { ranking: scores, bestKey: keyAt(j?.best) ?? scores[0]?.key, synthesis }
 }
 
 export function buildTitleMessages(firstMessage: string): LLMMessage[] {

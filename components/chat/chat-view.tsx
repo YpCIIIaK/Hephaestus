@@ -18,6 +18,7 @@ import { useChats } from '@/lib/stores/chats'
 import { useSettings } from '@/lib/stores/settings'
 import { cn, downloadFile } from '@/lib/utils'
 import { Composer, type ComposerHandle } from './composer'
+import { JudgeDialog } from './judge-dialog'
 import { MultiTaskComposer } from './multi-task-composer'
 import { ConversationList } from './conversation-list'
 import { EmptyChat } from './empty-chat'
@@ -90,6 +91,7 @@ export function ChatView() {
   const [layout, setLayout] = useState<'columns' | 'stack'>('columns')
   const [focus, setFocus] = useState<string | null>(null)
   const [systemOpen, setSystemOpen] = useState(false)
+  const [judgeOpen, setJudgeOpen] = useState(false)
   const [deleting, setDeleting] = useState(false)
   // Черновик: диалог ещё не создан, но участники и инструменты уже выбраны
   const [draft, setDraft] = useState<Conversation>(() => newConversation())
@@ -260,6 +262,11 @@ export function ChatView() {
               <Minimize2 className="size-3.5" /> Показать всех
             </button>
           )}
+          <Tip content={view.judge?.enabled ? `Судья включён${view.judge.instructions.trim() ? ' · со своей инструкцией' : ''}` : 'Судья: собрать ответы и сделать вывод'}>
+            <button onClick={() => setJudgeOpen(true)} className={cn('flex size-8 items-center justify-center rounded-lg hover:bg-surface-2', view.judge?.enabled ? 'text-gold' : 'text-muted hover:text-fg')} aria-label="Судья">
+              <Gavel className="size-4" />
+            </button>
+          </Tip>
           <Tip content={view.systemPrompt ? 'Системный промпт задан' : 'Системный промпт'}>
             <button onClick={() => setSystemOpen(true)} className={cn('flex size-8 items-center justify-center rounded-lg hover:bg-surface-2', view.systemPrompt ? 'text-accent' : 'text-muted hover:text-fg')} aria-label="Системный промпт">
               <ScrollText className="size-4" />
@@ -277,8 +284,8 @@ export function ChatView() {
                 <MenuItem onSelect={() => update({ isolate: !view.isolate })}>
                   <GitCompareArrows /> Своя копия проекта у каждого: {view.isolate ? 'вкл' : 'выкл'} · для параллельных правок
                 </MenuItem>
-                <MenuItem onSelect={() => setChatDefaults({ autoJudge: !defaults.autoJudge })}>
-                  <Gavel /> Автосудья: {defaults.autoJudge ? 'вкл' : 'выкл'}
+                <MenuItem onSelect={() => setJudgeOpen(true)}>
+                  <Gavel /> Судья: {(view.judge ? view.judge.enabled : defaults.autoJudge) ? 'вкл' : 'выкл'} · инструкция и модель
                 </MenuItem>
                 <MenuSeparator />
                 <MenuItem disabled={running || !conv.turns.length} onSelect={() => void compact()}>
@@ -331,6 +338,7 @@ export function ChatView() {
                     }}
                     focus={focus}
                     onFocus={setFocus}
+                    judgeConfig={view.judge}
                   />
                 </Fragment>
               ))}
@@ -371,6 +379,7 @@ export function ChatView() {
         </div>
       </section>
 
+      <JudgeDialog open={judgeOpen} onOpenChange={setJudgeOpen} value={view.judge} onSave={(judge) => update({ judge })} />
       <Dialog
         open={systemOpen}
         onOpenChange={setSystemOpen}

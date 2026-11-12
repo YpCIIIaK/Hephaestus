@@ -9,9 +9,9 @@ import { Badge, Spinner } from '@/components/ui/misc'
 import { Tip } from '@/components/ui/overlay'
 import { UsageLine } from '@/components/usage-line'
 import { toast } from 'sonner'
-import { applySandboxChanges, describeTarget, discardSandbox, judgeTurn, regenerate, sandboxPatch } from '@/lib/client/chat-runner'
+import { applySandboxChanges, canJudge, describeTarget, discardSandbox, judgeTurn, regenerate, sandboxPatch } from '@/lib/client/chat-runner'
 import { participantColor } from '@/lib/colors'
-import { targetKey, type ChatReply, type ChatTarget, type ChatTurn, type JudgeResult, type ReplySandbox } from '@/lib/engine/chat'
+import { targetKey, type ChatJudge, type ChatReply, type ChatTarget, type ChatTurn, type JudgeResult, type ReplySandbox } from '@/lib/engine/chat'
 import { useChats } from '@/lib/stores/chats'
 import { useSettings } from '@/lib/stores/settings'
 import { cn } from '@/lib/utils'
@@ -258,7 +258,8 @@ function JudgeCard({ judge, targets, convId, turnId }: { judge: JudgeResult; tar
     <div className="overflow-hidden rounded-2xl border border-gold/30 bg-gradient-to-b from-gold/[0.06] to-transparent">
       <div className="flex items-center gap-2 border-b border-gold/20 px-4 py-2.5">
         <Gavel className="size-4 text-gold" />
-        <span className="text-[13px] font-semibold">Вердикт судьи</span>
+        <span className="text-[13px] font-semibold">{judge.custom ? 'Вывод судьи' : 'Вердикт судьи'}</span>
+        {judge.custom && <Badge className="ml-1">по вашей инструкции</Badge>}
         {judge.status === 'streaming' && <Spinner className="size-3.5 text-gold" />}
         <span className="ml-auto flex items-center gap-1">
           {judge.status !== 'streaming' && (
@@ -299,7 +300,7 @@ function JudgeCard({ judge, targets, convId, turnId }: { judge: JudgeResult; tar
         )}
         {judge.synthesis && (
           <div className="border-t border-gold/15 pt-3">
-            <div className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-gold">Итоговый ответ</div>
+            <div className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-gold">{judge.custom ? 'Вывод' : 'Итоговый ответ'}</div>
             <Markdown text={judge.synthesis} streaming={judge.status === 'streaming'} />
           </div>
         )}
@@ -318,6 +319,7 @@ export function TurnView({
   onEdit,
   focus,
   onFocus,
+  judgeConfig,
 }: {
   convId: string
   turn: ChatTurn
@@ -329,6 +331,8 @@ export function TurnView({
   /** Развёрнутый участник: показываются только его ответы */
   focus?: string | null
   onFocus?: (key: string | null) => void
+  /** Судья диалога: его инструкция меняет, что делает кнопка вызова */
+  judgeConfig?: ChatJudge
 }) {
   // Показываем ответы и тех участников, которых позже убрали из диалога
   const keys = Object.keys(turn.replies)
@@ -336,7 +340,6 @@ export function TurnView({
   const multi = allTargets.length > 1
   const shown = focus && keys.includes(focus) ? allTargets.filter((t) => targetKey(t) === focus) : allTargets
   const nameOf = (key: string) => describeTarget(allTargets.find((t) => targetKey(t) === key) ?? { kind: 'model', id: key }).name
-  const doneCount = Object.values(turn.replies).filter((r) => r.status === 'done' && r.text).length
   const anyStreaming = Object.values(turn.replies).some((r) => r.status === 'streaming')
 
   return (
@@ -406,13 +409,12 @@ export function TurnView({
       {turn.judge ? (
         <JudgeCard judge={turn.judge} targets={allTargets} convId={convId} turnId={turn.id} />
       ) : (
-        multi &&
-        !turn.tasks &&
-        doneCount >= 2 &&
+        canJudge(turn, judgeConfig) &&
+        (multi || !!judgeConfig?.instructions.trim()) &&
         !anyStreaming && (
           <div className="flex justify-center">
             <Button size="sm" variant="outline" onClick={() => judgeTurn(convId, turn.id)}>
-              <Gavel className="text-gold" /> Сравнить ответы и собрать лучший
+              <Gavel className="text-gold" /> {judgeConfig?.instructions.trim() ? 'Вывод судьи по вашей инструкции' : 'Сравнить ответы и собрать лучший'}
             </Button>
           </div>
         )
