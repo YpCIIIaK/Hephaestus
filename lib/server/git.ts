@@ -52,6 +52,7 @@ export interface CloneResult {
   updated: boolean
   commit: string
   listing: string[]
+  note?: string
 }
 
 export async function gitClone(rawUrl: string, opts: { into?: 'tools' | 'workspace'; ref?: string } = {}): Promise<CloneResult> {
@@ -64,11 +65,22 @@ export async function gitClone(rawUrl: string, opts: { into?: 'tools' | 'workspa
       () => false,
     )
     let updated = false
+    let note = ''
     if (exists) {
       const remote = (await git(['-C', target.abs, 'remote', 'get-url', 'origin'])).out
       if (remote.replace(/\.git$/, '') !== url.replace(/\.git$/, '')) throw new GitError(`В ${target.rel} уже лежит другой репозиторий (${remote})`)
-      const pull = await git(['-C', target.abs, 'pull', '--ff-only', '--depth', '1'])
-      if (pull.code !== 0) throw new GitError(`Не удалось обновить ${target.rel}: ${pull.out}`)
+      // Модель могла работать в своей ветке (например, дорабатывала инструмент) — её не трогаем,
+      // а только скачиваем обновления основной ветки
+      const upstream = await git(['-C', target.abs, 'rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}'])
+      if (upstream.code === 0) {
+        const pull = await git(['-C', target.abs, 'pull', '--ff-only', '--depth', '1'])
+        if (pull.code !== 0) throw new GitError(`Не удалось обновить ${target.rel}: ${pull.out}`)
+      } else {
+        const branch = (await git(['-C', target.abs, 'branch', '--show-current'])).out || 'отделённый HEAD'
+        const fetch = await git(['-C', target.abs, 'fetch', '--depth', '1', 'origin'])
+        if (fetch.code !== 0) throw new GitError(`Не удалось скачать обновления ${target.rel}: ${fetch.out}`)
+        note = `Локальная ветка «${branch}» сохранена как есть; обновления основной ветки скачаны (origin/HEAD). Вернуться на основную ветку: git switch <её имя>.`
+      }
       updated = true
     } else {
       await fs.mkdir(/* turbopackIgnore: true */ path.dirname(target.abs), { recursive: true })
@@ -81,10 +93,10 @@ export async function gitClone(rawUrl: string, opts: { into?: 'tools' | 'workspa
       .filter((e) => e.name !== '.git')
       .map((e) => `${e.name}${e.isDirectory() ? '/' : ''}`)
       .sort()
-    return { path: target.rel, updated, commit, listing }
+    return { path: target.rel, updated, commit, listing, note: note || undefined }
   })
 }
 
 export function formatClone(r: CloneResult): string {
-  return `${r.updated ? 'Обновлён' : 'Склонирован'} ${r.path} (коммит ${r.commit})\n\n${r.listing.join('\n')}\n\nДальше: прочитай README (read_file ${r.path}/README.md), команды выполняй с cwd «${r.path}».`
+  return `${r.updated ? 'Обновлён' : 'Склонирован'} ${r.path} (коммит ${r.commit})${r.note ? `\n${r.note}` : ''}\n\n${r.listing.join('\n')}\n\nДальше: прочитай README (read_file ${r.path}/README.md), команды выполняй с cwd «${r.path}».`
 }
