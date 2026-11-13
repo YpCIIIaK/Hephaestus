@@ -1,10 +1,10 @@
 'use client'
 
-import { ArrowRight, Copy, Play, Plus, RotateCcw, Trash2, X } from 'lucide-react'
+import { ArrowRight, ChevronRight, Copy, Play, Plus, RotateCcw, Trash2, X } from 'lucide-react'
 import { toast } from 'sonner'
 import { startPipeline, usePipelineRunner } from '@/lib/client/pipeline-runner'
-import { useMemo } from 'react'
-import { Markdown } from '@/components/markdown'
+import { useMemo, useState } from 'react'
+import { LazyMarkdown, Markdown } from '@/components/markdown'
 import { ModelPicker } from '@/components/model-picker'
 import { ToolsetToggles, ToolTraceList } from '@/components/tool-chips'
 import { Button } from '@/components/ui/button'
@@ -399,6 +399,24 @@ function ItemResults({ items, running }: { items: NonNullable<NodeRun['itemResul
   )
 }
 
+/** Раздел, который строит содержимое только когда раскрыт — длинные выводы не тормозят панель */
+function Fold({ title, hint, defaultOpen = false, children }: { title: React.ReactNode; hint?: string; defaultOpen?: boolean; children: () => React.ReactNode }) {
+  const [open, setOpen] = useState(defaultOpen)
+  return (
+    <div className="rounded-xl border border-border">
+      <button type="button" onClick={() => setOpen((v) => !v)} className="flex w-full min-w-0 items-center gap-2 px-3 py-2.5 text-left">
+        <ChevronRight className={cn('size-3.5 shrink-0 text-muted transition-transform', open && 'rotate-90')} />
+        <span className="shrink-0 text-xs font-semibold">{title}</span>
+        {hint && !open && <span className="min-w-0 truncate text-xs text-muted">{hint}</span>}
+      </button>
+      {open && <div className="border-t border-border px-3 pb-3 pt-2.5">{children()}</div>}
+    </div>
+  )
+}
+
+const kb = (t: string) => (t.length < 1000 ? `${t.length} симв.` : `${(t.length / 1000).toFixed(t.length < 10_000 ? 1 : 0)} тыс. симв.`)
+const firstLine = (t: string) => t.split('\n').map((l) => l.replace(/[#*`|>_-]+/g, ' ').trim()).find(Boolean)?.slice(0, 140) ?? ''
+
 export function NodeOutput({ run }: { run: NodeRun }) {
   return (
     <div className="space-y-3">
@@ -415,26 +433,25 @@ export function NodeOutput({ run }: { run: NodeRun }) {
         </div>
       )}
       <UsageLine usage={run.usage} latencyMs={run.startedAt && run.endedAt ? run.endedAt - run.startedAt : undefined} />
-      {!!run.received?.length && <details className="rounded-xl border border-border p-3" open>
-        <summary className="cursor-pointer text-xs font-semibold">Получено от других узлов · {run.received.length}</summary>
-        <div className="mt-3 space-y-2.5">{run.received.map((part, i) => <div key={i} className="overflow-hidden rounded-lg border border-border bg-surface-2/40">
+      {!!run.received?.length && <Fold title={`Получено от других узлов · ${run.received.length}`} hint={run.received.map((r) => r.label).join(', ')}>
+        {() => <div className="space-y-2.5">{run.received!.map((part, i) => <div key={i} className="overflow-hidden rounded-lg border border-border bg-surface-2/40">
           <div className="flex items-center gap-1.5 border-b border-border bg-surface-2/70 px-3 py-1.5 text-[11.5px] font-medium text-muted">
             <span className="text-fg">{part.label}</span><ArrowRight className="size-3" /><span>этот узел</span>
           </div>
-          <div className="max-h-80 overflow-y-auto break-words px-3 py-2.5"><Markdown text={part.output} className="text-[12.5px]" /></div>
-        </div>)}</div>
-      </details>}
-      {run.systemPrompt && <details className="rounded-xl border border-border p-3"><summary className="cursor-pointer text-xs font-semibold">Инструкция модели</summary><div className="mt-2 max-h-72 overflow-y-auto break-words"><Markdown text={run.systemPrompt} className="text-[12.5px]" /></div></details>}
-      {run.prompt && <details className="rounded-xl border border-border p-3"><summary className="cursor-pointer text-xs font-semibold">Запрос модели</summary><div className="mt-2 max-h-72 overflow-y-auto break-words"><Markdown text={run.prompt} className="text-[12.5px]" /></div></details>}
-      {run.reasoning && <details className="rounded-xl border border-border p-3"><summary className="cursor-pointer text-xs font-semibold">Рассуждения, переданные моделью</summary><div className="mt-2 max-h-72 overflow-y-auto break-words"><Markdown text={run.reasoning} className="text-[12.5px]" /></div></details>}
+          <div className="max-h-96 overflow-y-auto break-words px-3 py-2.5"><LazyMarkdown text={part.output} className="text-[12.5px]" /></div>
+        </div>)}</div>}
+      </Fold>}
+      {run.systemPrompt && <Fold title="Инструкция модели">{() => <div className="max-h-96 overflow-y-auto break-words"><LazyMarkdown text={run.systemPrompt!} className="text-[12.5px]" /></div>}</Fold>}
+      {run.prompt && <Fold title="Запрос модели">{() => <div className="max-h-96 overflow-y-auto break-words"><LazyMarkdown text={run.prompt!} className="text-[12.5px]" /></div>}</Fold>}
+      {run.reasoning && <Fold title="Рассуждения, переданные моделью">{() => <div className="max-h-96 overflow-y-auto break-words"><LazyMarkdown text={run.reasoning!} className="text-[12.5px]" /></div>}</Fold>}
       {!!run.itemResults?.length && <ItemResults items={run.itemResults} running={run.status === 'running'} />}
       {!!run.tools?.length && <ToolTraceList tools={run.tools} />}
       {run.sandbox && run.status !== 'running' && <SandboxChanges id={run.sandbox} />}
       {run.error && <div className="rounded-lg border border-danger/25 bg-danger/8 p-2.5 text-[13px] text-danger">{run.error}</div>}
       {run.output && (
-        <div className="rounded-xl border border-border bg-surface-2/50 p-3">
-          <Markdown text={run.output} streaming={run.status === 'running'} className="text-[13.5px]" />
-        </div>
+        <Fold title={run.status === 'running' ? 'Ответ · пишется' : 'Ответ'} hint={`${kb(run.output)} · ${firstLine(run.output)}`}>
+          {() => <LazyMarkdown text={run.output!} streaming={run.status === 'running'} className="text-[13.5px]" />}
+        </Fold>
       )}
     </div>
   )

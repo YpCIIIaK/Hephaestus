@@ -2,7 +2,7 @@
 
 import { AlertTriangle, CheckCircle2, CircleSlash, Clock, Footprints, History, Maximize2, Play, RotateCcw } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { CopyButton, Markdown } from '@/components/markdown'
+import { CopyButton, LazyMarkdown, Markdown } from '@/components/markdown'
 import { Button } from '@/components/ui/button'
 import { Input, Textarea } from '@/components/ui/field'
 import { Badge, Spinner } from '@/components/ui/misc'
@@ -247,7 +247,7 @@ export function RunPanel({ pipeline, run, onRun, onRerun, onSelectRun, onSelectN
                   <CopyButton text={run.output} />
                 </div>
                 <div className="p-3">
-                  <Markdown text={run.output} className="text-[13.5px]" />
+                  <LazyMarkdown text={run.output} className="text-[13.5px]" />
                 </div>
               </div>
             )}
