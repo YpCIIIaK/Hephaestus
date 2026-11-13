@@ -13,6 +13,7 @@ interface OpenRouterModel {
   created?: number
   pricing?: { prompt?: string; completion?: string }
   supported_parameters?: string[]
+  top_provider?: { max_completion_tokens?: number | null }
 }
 
 let openrouterCache: { at: number; models: ModelInfo[] } | null = null
@@ -38,6 +39,7 @@ async function fetchOpenRouter(refresh: boolean): Promise<ModelInfo[]> {
       vendor: m.id.split('/')[0],
       description: m.description,
       contextLength: m.context_length,
+      maxOutput: m.top_provider?.max_completion_tokens ?? undefined,
       created: m.created,
       // Цена −1 у openrouter/auto означает «зависит от выбранной модели»
       pricing: Number.isFinite(prompt) && Number.isFinite(completion) && prompt >= 0 && completion >= 0 ? { prompt, completion } : undefined,
@@ -111,6 +113,12 @@ export async function getCatalog(refresh = false): Promise<CatalogResult> {
   // Ollama, который просто не запущен, — нормальная ситуация, не ошибка
   const filtered = errors.filter((e) => !e.startsWith('Ollama'))
   return { models: [...subs, ...local, ...custom, ...remote], errors: filtered }
+}
+
+/** Модель из уже загруженного каталога, без сетевого запроса; нет каталога — undefined */
+export function cachedModel(rawId: string): ModelInfo | undefined {
+  const id = splitEffort(rawId).base
+  return openrouterCache?.models.find((m) => m.id === id)
 }
 
 export async function findModel(rawId: string): Promise<ModelInfo | undefined> {

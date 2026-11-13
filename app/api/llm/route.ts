@@ -18,7 +18,7 @@ const schema = z.object({
   model: z.string().min(1),
   messages: z.array(message).min(1),
   temperature: z.number().min(0).max(2).optional(),
-  maxTokens: z.number().int().positive().max(200_000).optional(),
+  maxTokens: z.number().int().positive().max(1_000_000).optional(),
   tools: z.array(z.enum(['web', 'files_read', 'files_write', 'code', 'terminal', 'knowledge', 'skills'])).optional(),
   jsonMode: z.boolean().optional(),
   maxToolSteps: z.number().int().min(0).max(50).optional(),

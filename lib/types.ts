@@ -12,6 +12,8 @@ export interface ModelInfo {
   vendor: string
   description?: string
   contextLength?: number
+  /** Сколько токенов модель может выдать за один ответ (у OpenRouter — top_provider.max_completion_tokens) */
+  maxOutput?: number
   /** Цена в долларах за один токен */
   pricing?: { prompt: number; completion: number }
   supportsTools?: boolean

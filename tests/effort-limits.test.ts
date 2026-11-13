@@ -115,3 +115,23 @@ describe('лимиты подписок', () => {
     expect(claude.windows[0]).toMatchObject({ key: 'five_hour', usedPercent: 50 })
   })
 })
+
+describe('длина ответа до 1 000 000', () => {
+  it('запрос больше потолка модели урезается до её max_completion_tokens', async () => {
+    const bodies: Record<string, unknown>[] = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init?: RequestInit) => {
+        if (String(url).endsWith('/api/v1/models')) return new Response(JSON.stringify({ data: [{ id: 'big/model', name: 'Big', context_length: 1_000_000, top_provider: { max_completion_tokens: 128_000 } }] }))
+        if (String(url).includes('/chat/completions')) bodies.push(JSON.parse(init!.body as string))
+        return new Response(`data: ${JSON.stringify({ choices: [{ delta: { content: 'ок' }, finish_reason: 'stop' }], usage: { prompt_tokens: 1, completion_tokens: 1, cost: 0 } })}\n\ndata: [DONE]\n\n`)
+      }),
+    )
+    const { getCatalog } = await import('@/lib/server/catalog')
+    await getCatalog(true)
+    for await (const _ of runLLM({ model: 'big/model', maxTokens: 1_000_000, messages: [{ role: 'user', content: 'x' }] })) void _
+    for await (const _ of runLLM({ model: 'unknown/model', maxTokens: 1_000_000, messages: [{ role: 'user', content: 'x' }] })) void _
+    expect(bodies[0].max_tokens).toBe(128_000)
+    expect(bodies[1].max_tokens).toBe(1_000_000) // потолок неизвестен — как просили
+  })
+})

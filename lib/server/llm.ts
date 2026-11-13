@@ -1,7 +1,7 @@
 import type { LLMEvent, LLMMessage, LLMRequest, ToolCall, Usage } from '../types'
 import { addUsage, computeCost, isSubscriptionModel, providerOf, splitEffort, upstreamModelId, ZERO_USAGE } from '../models'
 import { SSEParser } from '../sse'
-import { findModel } from './catalog'
+import { cachedModel, findModel } from './catalog'
 import { getCustomEndpoint, getOllamaUrl, getOpenRouterKey } from './settings'
 import { buildTools, runTool, type ToolDefinition } from './tools'
 import { mockStream } from './mock-llm'
@@ -388,6 +388,9 @@ export async function* runLLM(req: LLMRequest, signal?: AbortSignal): AsyncGener
   // выпадает из аналитики (длинная цепочка с инструментами стоит десятки шагов)
   const usageSoFar = (): LLMEvent[] => (total.promptTokens || total.completionTokens || (total.cost ?? 0) > 0 ? [{ t: 'usage', usage: total, model: req.model }] : [])
   let maxTokens = req.maxTokens ?? 4096
+  // Просить больше, чем модель может выдать за ответ, нельзя — часть провайдеров отвечает ошибкой.
+  // Поэтому «1 000 000» в настройках значит «сколько модель может»
+  const outputCap = ep.provider === 'openrouter' ? cachedModel(req.model)?.maxOutput : undefined
   let lowReasoning = false
 
   // Слабые модели зацикливаются: читают один и тот же файл, повторяют команду
@@ -406,7 +409,7 @@ export async function* runLLM(req: LLMRequest, signal?: AbortSignal): AsyncGener
       messages,
       stream: true,
       temperature: req.temperature ?? 0.7,
-      max_tokens: maxTokens,
+      max_tokens: outputCap ? Math.min(maxTokens, outputCap) : maxTokens,
       stream_options: { include_usage: true },
     }
     if (ep.provider === 'openrouter') body.usage = { include: true }

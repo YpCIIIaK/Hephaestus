@@ -91,7 +91,7 @@ function AgentFields({ node, set, pipeline }: { node: PipelineNode; set: (p: Par
       </FieldRow>
       <div className="grid grid-cols-2 gap-3">
         <FieldRow label="Макс. токенов">
-          <Input type="number" min={50} max={64000} value={eff.maxTokens} onChange={(e) => set({ maxTokens: Number(e.target.value) || undefined })} />
+          <Input type="number" min={50} max={1_000_000} value={eff.maxTokens} onChange={(e) => set({ maxTokens: Number(e.target.value) || undefined })} />
         </FieldRow>
         <FieldRow label="Повторы при ошибке">
           <Input type="number" min={0} max={5} value={c.retries ?? 1} onChange={(e) => set({ retries: Number(e.target.value) })} />

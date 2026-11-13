@@ -314,14 +314,14 @@ function ChatPrefs() {
   return (
     <Section icon={<MessageSquareText />} title="Чат">
       <div className="grid gap-5 sm:grid-cols-2">
-        <FieldRow label={`Память диалога · ${formatTokens(chat.maxContextTokens)} токенов`} hint="Старые сообщения отбрасываются, когда история длиннее">
-          <Slider min={2000} max={200_000} step={2000} value={[chat.maxContextTokens]} onValueChange={([v]) => setChat({ maxContextTokens: v })} />
+        <FieldRow label={`Память диалога · ${formatTokens(chat.maxContextTokens)} токенов`} hint="Когда история длиннее, ранние ходы сжимаются в резюме. Больше, чем вмещает контекст модели, ставить нет смысла — у большинства моделей до 1M">
+          <Slider min={2000} max={1_000_000} step={2000} value={[chat.maxContextTokens]} onValueChange={([v]) => setChat({ maxContextTokens: v })} />
         </FieldRow>
         <FieldRow label={`Температура моделей · ${chat.temperature.toFixed(1)}`} hint="У агентов — своя">
           <Slider min={0} max={2} step={0.1} value={[chat.temperature]} onValueChange={([v]) => setChat({ temperature: v })} />
         </FieldRow>
-        <FieldRow label="Макс. длина ответа, токенов">
-          <Input type="number" min={256} max={128000} value={chat.maxTokens} onChange={(e) => setChat({ maxTokens: Number(e.target.value) || 4096 })} />
+        <FieldRow label="Макс. длина ответа, токенов" hint="До 1 000 000; если модель выдаёт меньше, запрос сам урежется до её предела">
+          <Input type="number" min={256} max={1_000_000} value={chat.maxTokens} onChange={(e) => setChat({ maxTokens: Number(e.target.value) || 4096 })} />
         </FieldRow>
         <FieldRow label="Модель судьи">
           <ModelPicker value={chat.judgeModel} onChange={(judgeModel) => setChat({ judgeModel })} />

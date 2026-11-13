@@ -83,7 +83,7 @@ function AgentEditor({ agent, open, onOpenChange }: { agent: Agent | null; open:
             <Slider min={0} max={2} step={0.1} value={[a.temperature]} onValueChange={([v]) => set({ temperature: v })} />
           </FieldRow>
           <FieldRow label="Макс. токенов ответа">
-            <Input type="number" min={100} max={64000} value={a.maxTokens} onChange={(e) => set({ maxTokens: Number(e.target.value) || 2000 })} />
+            <Input type="number" min={100} max={1_000_000} value={a.maxTokens} onChange={(e) => set({ maxTokens: Number(e.target.value) || 2000 })} />
           </FieldRow>
         </div>
         <FieldRow label="Инструменты">
