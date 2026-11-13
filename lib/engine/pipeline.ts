@@ -495,9 +495,11 @@ export async function runPipeline(
     return undefined
   }
 
-  const runShell = async (node: PipelineNode, command: string) => {
+  const runShell = async (node: PipelineNode, command: string, ctx: ExecContext) => {
     const sandbox = sandboxFor(node)
-    const r = await deps.tool('run_command', { command, cwd: node.config.cwd || undefined, timeout_sec: node.config.timeoutSec, raw: true }, signal, { sandbox })
+    // Папку можно задать шаблоном: например, {{Выбор репозитория.target}}
+    const cwd = render(node.config.cwd, ctx, '').trim()
+    const r = await deps.tool('run_command', { command, cwd: cwd || undefined, timeout_sec: node.config.timeoutSec, raw: true }, signal, { sandbox })
     return { ...r, sandbox }
   }
 
@@ -543,7 +545,7 @@ export async function runPipeline(
         const command = render(node.config.command, ctx, '').trim()
         if (!command) throw new Error('Пустая команда')
         update(node.id, { prompt: command })
-        const r = await runShell(node, command)
+        const r = await runShell(node, command, ctx)
         throwIfAborted(signal)
         const where = r.sandbox ? ' · в копии проекта' : ''
         if (!r.ok && !node.config.allowFail) throw new Error(`Команда завершилась с ошибкой${where}:\n${r.output.slice(-3000)}`)
@@ -725,7 +727,7 @@ export async function runPipeline(
           update(node.id, { attempts: attempt, note: `Проверка ${attempt}` })
           if (checkCommand) {
             // Проверка командой: решает код выхода (тесты, сборка, повторный скан), а не мнение модели
-            const r = await runShell(node, checkCommand)
+            const r = await runShell(node, checkCommand, ctx)
             throwIfAborted(signal)
             if (r.ok) return { output: candidate, attempts: attempt, note: `Команда проверки прошла с ${attempt}-й попытки${r.sandbox ? ' (в копии проекта)' : ''}` }
             feedback = `Команда проверки \`${checkCommand}\` завершилась с ошибкой. Вывод (конец):\n${r.output.slice(-4000)}`

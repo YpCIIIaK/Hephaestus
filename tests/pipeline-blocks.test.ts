@@ -49,6 +49,27 @@ describe('блок «Команда»', () => {
   })
 })
 
+describe('цель из ответа блока: {{Блок.поле}}', () => {
+  it('поле JSON подставляется в промпт, команду и папку команды', async () => {
+    const { llm, calls } = fakeLLM((req) => (lastUser(req).startsWith('выбери') ? 'Вот: {"target":"repos/app","focus":"инъекции"}' : `ок ${lastUser(req)}`))
+    const { tool, calls: shell } = fakeShell(() => ({ ok: true, output: 'скан' }))
+    const p = graph(
+      [
+        { id: 't', kind: 'agent', label: 'Выбор репозитория', config: { model: 'm', prompt: 'выбери' } },
+        { id: 'c', kind: 'command', label: 'Скан', config: { command: 'scan {{Выбор репозитория.focus}}', cwd: '{{Выбор репозитория.target}}' } },
+        { id: 'a', kind: 'agent', label: '1.1 Add repos', config: { model: 'm', prompt: 'папка {{Выбор репозитория.target}}, нет поля: {{Выбор репозитория.нет}}' } },
+        { id: 'b', kind: 'agent', label: 'После', config: { model: 'm', prompt: '{{1.1 Add repos}}' } },
+      ],
+      [['t', 'c'], ['t', 'a'], ['a', 'b']],
+    )
+    await runPipeline(p, 'x', { llm, tool, getAgent })
+    expect(shell[0]).toMatchObject({ cmd: 'scan инъекции', args: { cwd: 'repos/app' } })
+    expect(lastUser(calls[1])).toBe('папка repos/app, нет поля: {{Выбор репозитория.нет}}')
+    // Точка в названии блока — это название, а не поле
+    expect(lastUser(calls[2])).toBe('ок папка repos/app, нет поля: {{Выбор репозитория.нет}}')
+  })
+})
+
 describe('блок «Для каждого»', () => {
   it('делит вход и обрабатывает элементы параллельно, ошибки элементов не роняют блок', async () => {
     let active = 0
