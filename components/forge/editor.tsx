@@ -105,16 +105,24 @@ function Canvas({ pipeline, onChange }: { pipeline: Pipeline; onChange: (p: Pipe
     return m
   }, [issues])
 
+  // Холст строится из данных пайплайна заново при каждом изменении. React Flow
+  // прячет узлы, пока не знает их размеров, а во время перетаскивания заново их
+  // не замеряет — без сохранённых размеров весь холст пропадал до отпускания мыши.
+  const [measured, setMeasured] = useState<Record<string, { width: number; height: number }>>({})
+  const [dragging, setDragging] = useState<string | null>(null)
+
   const flowNodes: ForgeFlowNode[] = useMemo(
     () =>
       pipeline.nodes.map((n) => ({
         id: n.id,
         type: 'forge',
         position: n.position,
+        measured: measured[n.id],
+        dragging: dragging === n.id,
         selected: n.id === selectedId,
         data: { node: n, run: currentRun?.pipelineId === pipeline.id ? currentRun.nodes[n.id] : undefined, waiting: runner?.waitingFor === n.id, issue: issueByNode.get(n.id) },
       })),
-    [pipeline.nodes, selectedId, currentRun, runner?.waitingFor, issueByNode, pipeline.id],
+    [pipeline.nodes, selectedId, currentRun, runner?.waitingFor, issueByNode, pipeline.id, measured, dragging],
   )
 
   const flowEdges: Edge[] = useMemo(
@@ -134,9 +142,15 @@ function Canvas({ pipeline, onChange }: { pipeline: Pipeline; onChange: (p: Pipe
       let edges = pipeline.edges
       let changed = false
       for (const ch of changes) {
-        if (ch.type === 'position' && ch.position) {
-          nodes = nodes.map((n) => (n.id === ch.id ? { ...n, position: ch.position! } : n))
-          changed = true
+        if (ch.type === 'dimensions' && ch.dimensions) {
+          const { width, height } = ch.dimensions
+          setMeasured((m) => (m[ch.id]?.width === width && m[ch.id]?.height === height ? m : { ...m, [ch.id]: { width, height } }))
+        } else if (ch.type === 'position') {
+          if (ch.dragging !== undefined) setDragging(ch.dragging ? ch.id : null)
+          if (ch.position) {
+            nodes = nodes.map((n) => (n.id === ch.id ? { ...n, position: ch.position! } : n))
+            changed = true
+          }
         } else if (ch.type === 'remove') {
           nodes = nodes.filter((n) => n.id !== ch.id)
           edges = edges.filter((e) => e.source !== ch.id && e.target !== ch.id)
