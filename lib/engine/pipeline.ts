@@ -42,6 +42,8 @@ export interface NodeConfig {
   routes?: RouteDef[]
   // Объединение / выход
   template?: string
+  /** Вход: подсказка, что писать при запуске */
+  hint?: string
   // Проверка
   criteria?: string
   maxAttempts?: number

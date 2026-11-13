@@ -285,7 +285,7 @@ function Canvas({ pipeline, onChange }: { pipeline: Pipeline; onChange: (p: Pipe
             setPanel('run')
           }}
           fitView
-          fitViewOptions={{ padding: 0.15, minZoom: 0.6, maxZoom: 1 }}
+          fitViewOptions={{ padding: 0.1, minZoom: 0.3, maxZoom: 1 }}
           minZoom={0.2}
           deleteKeyCode={['Delete', 'Backspace']}
           proOptions={{ hideAttribution: true }}

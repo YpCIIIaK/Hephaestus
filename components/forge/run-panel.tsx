@@ -15,8 +15,8 @@ import { usePipelines } from '@/lib/stores/pipelines'
 import { cn, formatMs, formatRelative } from '@/lib/utils'
 import { NODE_STYLE } from './node-meta'
 import { RunFullscreen } from './run-graph'
+import { inputHint, useRunInputs } from './run-inputs'
 
-const inputs = new Map<string, string>()
 
 function RunStatus({ run }: { run: PipelineRun }) {
   const map = {
@@ -85,7 +85,10 @@ function RunMemory({ id, live }: { id: string; live: boolean }) {
 }
 
 export function RunPanel({ pipeline, run, onRun, onRerun, onSelectRun, onSelectNode, onChange }: { pipeline: Pipeline; run?: PipelineRun; onRun: (input: string, step: boolean) => void; onRerun: (previous: PipelineRun, nodeIds: string[]) => void; onSelectRun: (id: string) => void; onSelectNode: (id: string) => void; onChange: (pipeline: Pipeline) => void }) {
-  const [input, setInput] = useState(() => inputs.get(pipeline.id) ?? run?.input ?? '')
+  const draft = useRunInputs((s) => s.inputs[pipeline.id])
+  const setDraft = useRunInputs((s) => s.set)
+  const input = draft ?? run?.input ?? ''
+  const setInput = (v: string) => setDraft(pipeline.id, v)
   const [step, setStep] = useState(false)
   const active = usePipelineRunner((s) => s.active[pipeline.id])
   const runs = usePipelines((s) => s.runs)
@@ -132,12 +135,11 @@ export function RunPanel({ pipeline, run, onRun, onRerun, onSelectRun, onSelectN
           value={input}
           onChange={(e) => {
             setInput(e.target.value)
-            inputs.set(pipeline.id, e.target.value)
           }}
           onKeyDown={(e) => {
             if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && !active) onRun(input, step)
           }}
-          placeholder="Вход пайплайна — {{input}}"
+          placeholder={inputHint(pipeline)}
         />
         <div className="flex items-center gap-3">
           <label className="flex items-center gap-2 text-[13px] text-muted">

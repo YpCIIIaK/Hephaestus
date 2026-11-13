@@ -1,6 +1,8 @@
 'use client'
 
-import { Copy, Plus, RotateCcw, Trash2, X } from 'lucide-react'
+import { Copy, Play, Plus, RotateCcw, Trash2, X } from 'lucide-react'
+import { toast } from 'sonner'
+import { startPipeline, usePipelineRunner } from '@/lib/client/pipeline-runner'
 import { useMemo } from 'react'
 import { Markdown } from '@/components/markdown'
 import { ModelPicker } from '@/components/model-picker'
@@ -10,11 +12,12 @@ import { FieldRow, Input, NativeSelect, Textarea } from '@/components/ui/field'
 import { Badge, Segmented } from '@/components/ui/misc'
 import { Slider, Switch } from '@/components/ui/overlay'
 import { UsageLine } from '@/components/usage-line'
-import { effectiveAgentConfig, itemTitle, NODE_META, type NodeConfig, type NodeRun, type Pipeline, type PipelineNode } from '@/lib/engine/pipeline'
+import { effectiveAgentConfig, itemTitle, NODE_META, validatePipeline, type NodeConfig, type NodeRun, type Pipeline, type PipelineNode } from '@/lib/engine/pipeline'
 import { getAgent, useAllAgents } from '@/lib/stores/agents'
 import { cn, uid } from '@/lib/utils'
 import { NODE_STYLE } from './node-meta'
 import { SandboxChanges } from './sandbox-changes'
+import { inputHint, useRunInputs } from './run-inputs'
 
 function VarChips({ pipeline, node, onInsert }: { pipeline: Pipeline; node: PipelineNode; onInsert: (v: string) => void }) {
   // Предлагаем узлы, которые выполняются раньше текущего
@@ -150,11 +153,42 @@ function SandboxSource({ node, pipeline, set }: { node: PipelineNode; pipeline: 
   )
 }
 
+/** Блок «Вход»: тот же черновик входа, что в панели «Запуск», и кнопка запуска прямо здесь */
+function InputFields({ node, pipeline, set }: { node: PipelineNode; pipeline: Pipeline; set: (p: Partial<NodeConfig>) => void }) {
+  const draft = useRunInputs((s) => s.inputs[pipeline.id] ?? '')
+  const setDraft = useRunInputs((s) => s.set)
+  const active = usePipelineRunner((s) => s.active[pipeline.id])
+  return (
+    <>
+      <p className="text-sm leading-relaxed text-muted">
+        Это то, с чем запускают пайплайн: задача, цель, фокус. В шаблонах других блоков вход доступен как <code className="font-mono text-accent">{'{{input}}'}</code>.
+      </p>
+      <FieldRow label="Вход для запуска" hint="То же поле, что в панели «Запуск»">
+        <Textarea rows={5} value={draft} onChange={(e) => setDraft(pipeline.id, e.target.value)} placeholder={inputHint(pipeline)} />
+      </FieldRow>
+      <Button
+        variant="primary"
+        disabled={!!active}
+        onClick={() => {
+          const errors = validatePipeline(pipeline).filter((i) => i.level === 'error')
+          if (errors.length) return toast.error('Пайплайн не готов к запуску', { description: errors[0].message })
+          void startPipeline(pipeline, draft)
+        }}
+      >
+        <Play className="fill-current" /> {active ? 'Выполняется' : 'Запустить'}
+      </Button>
+      <FieldRow label="Подсказка ко входу" hint="Что писать во «Вход» — видно тому, кто запускает пайплайн">
+        <Textarea rows={2} value={node.config.hint ?? ''} onChange={(e) => set({ hint: e.target.value || undefined })} placeholder="Например: репозиторий и на что обратить внимание" />
+      </FieldRow>
+    </>
+  )
+}
+
 function ConfigFields({ node, pipeline, set }: { node: PipelineNode; pipeline: Pipeline; set: (p: Partial<NodeConfig>) => void }) {
   const c = node.config
   switch (node.kind) {
     case 'input':
-      return <p className="text-sm leading-relaxed text-muted">Сюда попадает запрос, с которым запускают пайплайн. В шаблонах других узлов он доступен как <code className="font-mono text-accent">{'{{input}}'}</code>.</p>
+      return <InputFields node={node} pipeline={pipeline} set={set} />
     case 'command':
       return (
         <>
