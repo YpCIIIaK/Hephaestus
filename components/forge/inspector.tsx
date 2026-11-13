@@ -1,6 +1,6 @@
 'use client'
 
-import { Copy, Play, Plus, RotateCcw, Trash2, X } from 'lucide-react'
+import { ArrowRight, Copy, Play, Plus, RotateCcw, Trash2, X } from 'lucide-react'
 import { toast } from 'sonner'
 import { startPipeline, usePipelineRunner } from '@/lib/client/pipeline-runner'
 import { useMemo } from 'react'
@@ -417,14 +417,16 @@ export function NodeOutput({ run }: { run: NodeRun }) {
       <UsageLine usage={run.usage} latencyMs={run.startedAt && run.endedAt ? run.endedAt - run.startedAt : undefined} />
       {!!run.received?.length && <details className="rounded-xl border border-border p-3" open>
         <summary className="cursor-pointer text-xs font-semibold">Получено от других узлов · {run.received.length}</summary>
-        <div className="mt-3 space-y-3">{run.received.map((part, i) => <div key={i} className="rounded-lg bg-surface-2/50 p-2.5">
-          <div className="mb-1 text-xs font-medium text-muted">{part.label} → этот узел</div>
-          <div className="max-h-56 overflow-y-auto whitespace-pre-wrap break-words text-xs">{part.output}</div>
+        <div className="mt-3 space-y-2.5">{run.received.map((part, i) => <div key={i} className="overflow-hidden rounded-lg border border-border bg-surface-2/40">
+          <div className="flex items-center gap-1.5 border-b border-border bg-surface-2/70 px-3 py-1.5 text-[11.5px] font-medium text-muted">
+            <span className="text-fg">{part.label}</span><ArrowRight className="size-3" /><span>этот узел</span>
+          </div>
+          <div className="max-h-80 overflow-y-auto break-words px-3 py-2.5"><Markdown text={part.output} className="text-[12.5px]" /></div>
         </div>)}</div>
       </details>}
-      {run.systemPrompt && <details className="rounded-xl border border-border p-3"><summary className="cursor-pointer text-xs font-semibold">Инструкция модели</summary><div className="mt-2 max-h-64 overflow-y-auto whitespace-pre-wrap break-words text-xs">{run.systemPrompt}</div></details>}
-      {run.prompt && <details className="rounded-xl border border-border p-3"><summary className="cursor-pointer text-xs font-semibold">Запрос модели</summary><div className="mt-2 max-h-64 overflow-y-auto whitespace-pre-wrap break-words text-xs">{run.prompt}</div></details>}
-      {run.reasoning && <details className="rounded-xl border border-border p-3"><summary className="cursor-pointer text-xs font-semibold">Рассуждения, переданные моделью</summary><div className="mt-2 max-h-64 overflow-y-auto whitespace-pre-wrap break-words text-xs">{run.reasoning}</div></details>}
+      {run.systemPrompt && <details className="rounded-xl border border-border p-3"><summary className="cursor-pointer text-xs font-semibold">Инструкция модели</summary><div className="mt-2 max-h-72 overflow-y-auto break-words"><Markdown text={run.systemPrompt} className="text-[12.5px]" /></div></details>}
+      {run.prompt && <details className="rounded-xl border border-border p-3"><summary className="cursor-pointer text-xs font-semibold">Запрос модели</summary><div className="mt-2 max-h-72 overflow-y-auto break-words"><Markdown text={run.prompt} className="text-[12.5px]" /></div></details>}
+      {run.reasoning && <details className="rounded-xl border border-border p-3"><summary className="cursor-pointer text-xs font-semibold">Рассуждения, переданные моделью</summary><div className="mt-2 max-h-72 overflow-y-auto break-words"><Markdown text={run.reasoning} className="text-[12.5px]" /></div></details>}
       {!!run.itemResults?.length && <ItemResults items={run.itemResults} running={run.status === 'running'} />}
       {!!run.tools?.length && <ToolTraceList tools={run.tools} />}
       {run.sandbox && run.status !== 'running' && <SandboxChanges id={run.sandbox} />}

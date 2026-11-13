@@ -52,8 +52,15 @@ const callLLMOnce: LLMCall = async (req: LLMRequest, opts: LLMCallOptions = {}):
   const tools: ToolTrace[] = []
   let usage: Usage | null = null
   let error: string | undefined
+  // Текст до и после вызова инструментов — отдельные абзацы, а не «files.Разведка»
+  let afterTool = false
 
   const handle = (e: LLMEvent) => {
+    if (e.t === 'text' && afterTool && e.v) {
+      afterTool = false
+      if (text.trim() && !/\n\s*$/.test(text)) e = { ...e, v: `\n\n${e.v.replace(/^\s+/, '')}` }
+    }
+    if (e.t === 'tool_call') afterTool = true
     switch (e.t) {
       case 'text':
         text += e.v
