@@ -4,7 +4,7 @@ import { AlertTriangle, CheckCircle2, CircleSlash, Clock, Footprints, History, M
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { CopyButton, Markdown } from '@/components/markdown'
 import { Button } from '@/components/ui/button'
-import { Textarea } from '@/components/ui/field'
+import { Input, Textarea } from '@/components/ui/field'
 import { Badge, Spinner } from '@/components/ui/misc'
 import { Popover, PopoverContent, PopoverTrigger, Switch } from '@/components/ui/overlay'
 import { UsageLine } from '@/components/usage-line'
@@ -56,6 +56,55 @@ function Timeline({ pipeline, run }: { pipeline: Pipeline; run: PipelineRun }) {
         })}
       </div>
     </div>
+  )
+}
+
+/** Настройки, которые действуют на все блоки сразу — чтобы не прописывать их в каждом */
+function PipelineSettings({ pipeline, onChange, disabled }: { pipeline: Pipeline; onChange: (p: Pipeline) => void; disabled: boolean }) {
+  const set = (patch: Partial<Pipeline>) => onChange({ ...pipeline, ...patch, updatedAt: new Date().toISOString() })
+  const labels = pipeline.nodes.filter((n) => n.kind === 'agent').map((n) => n.label)
+  const filled = !!(pipeline.workdir?.trim() || pipeline.sharedPrompt?.trim())
+  return (
+    <details className="rounded-lg bg-surface-2/50 p-2.5 text-xs" open={filled || undefined}>
+      <summary className="cursor-pointer font-medium">
+        Общие настройки для всех блоков{filled ? ' · заданы' : ''}
+      </summary>
+      <div className="mt-2.5 space-y-3">
+        <label className="block space-y-1">
+          <span className="font-medium">Папка проекта</span>
+          <Input
+            value={pipeline.workdir ?? ''}
+            disabled={disabled}
+            onChange={(e) => set({ workdir: e.target.value || undefined })}
+            placeholder="пусто — вся рабочая папка"
+            className="h-8 font-mono text-xs"
+          />
+          <span className="block text-muted">
+            Агенты, команды и запись файлов работают в этой подпапке, как будто она и есть рабочая папка. Можно шаблоном — например, папка, которую выбрал блок: <code className="font-mono text-accent">{'{{Выбор репозитория.target}}'}</code>. Блоки, которые идут раньше, работают во всей рабочей папке.
+          </span>
+          {labels.length > 0 && !pipeline.workdir && (
+            <span className="flex flex-wrap gap-1 pt-0.5">
+              {labels.slice(0, 4).map((l) => (
+                <button key={l} type="button" disabled={disabled} onClick={() => set({ workdir: `{{${l}.target}}` })} className="rounded border border-border bg-surface px-1.5 py-0.5 font-mono text-[10.5px] text-muted hover:text-accent">
+                  {`{{${l}.target}}`}
+                </button>
+              ))}
+            </span>
+          )}
+        </label>
+        <label className="block space-y-1">
+          <span className="font-medium">Общая инструкция</span>
+          <Textarea
+            rows={3}
+            value={pipeline.sharedPrompt ?? ''}
+            disabled={disabled}
+            onChange={(e) => set({ sharedPrompt: e.target.value || undefined })}
+            placeholder="Добавляется к инструкции каждого агента: правила, фокус, контекст задачи. Можно шаблоны: {{input}}, {{Блок.поле}}"
+            className="text-xs"
+          />
+        </label>
+      </div>
+    </details>
   )
 }
 
@@ -150,6 +199,7 @@ export function RunPanel({ pipeline, run, onRun, onRerun, onSelectRun, onSelectN
             {active ? <Spinner /> : <Play className="fill-current" />} {active ? 'Выполняется' : 'Запустить'}
           </Button>
         </div>
+        <PipelineSettings pipeline={pipeline} onChange={onChange} disabled={!!active} />
         <label className="flex items-start gap-2 rounded-lg bg-surface-2/50 p-2.5 text-xs">
           <Switch checked={pipeline.sharedMemory !== false} disabled={!!active} onCheckedChange={(value) => onChange({ ...pipeline, sharedMemory: value, updatedAt: new Date().toISOString() })} />
           <span>Общая память запуска {pipeline.sharedMemory !== false ? 'включена' : 'выключена'}<span className="block text-muted">Блоки с инструментами записывают находки, и все остальные блоки видят эти записи. Перезапуск продолжает ту же память.</span></span>

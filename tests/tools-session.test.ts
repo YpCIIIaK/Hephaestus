@@ -84,8 +84,37 @@ describe('команда для блока Кузницы', () => {
     expect(await (await call({ name: 'run_command', args: { command: 'echo -n копия > marker.txt', raw: true }, sandbox: id })).json()).toMatchObject({ ok: true })
     expect(await fs.readFile(path.join(dir, 'marker.txt'), 'utf8')).toBe('оригинал') // оригинал не тронут
     expect(await (await call({ name: 'run_command', args: { command: 'cat marker.txt', raw: true }, sandbox: id })).json()).toEqual({ ok: true, output: 'копия' })
+    // Папка проекта пайплайна: подпапка работает как рабочая, выйти за пределы нельзя
+    await fs.mkdir(path.join(dir, 'repos/app'), { recursive: true })
+    await fs.writeFile(path.join(dir, 'repos/app/marker.txt'), 'подпапка')
+    expect(await (await call({ name: 'run_command', args: { command: 'cat marker.txt', raw: true }, root: 'repos/app' })).json()).toEqual({ ok: true, output: 'подпапка' })
+    expect(await (await call({ name: 'read_file', args: { path: '../../marker.txt' }, root: 'repos/app' })).json()).toMatchObject({ ok: false })
+    expect(await (await call({ name: 'run_command', args: { command: 'pwd', raw: true }, root: '../..' })).json()).toMatchObject({ ok: false, output: expect.stringContaining('за пределы') })
     await removeSandbox(id)
     await saveServerSettings({ terminal: 'off' })
+  })
+})
+
+describe('папка проекта в запросе модели', () => {
+  it('инструменты модели работают в подпапке, как в рабочей папке', async () => {
+    await fs.mkdir(path.join(dir, 'repos/svc'), { recursive: true })
+    await fs.writeFile(path.join(dir, 'repos/svc/app.js'), 'const secret = 1')
+    let call = 0
+    const results: string[] = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_url: string, init?: RequestInit) => {
+        const body = JSON.parse(init!.body as string)
+        const tool = body.messages.find((m: { role: string }) => m.role === 'tool')
+        if (tool) results.push(tool.content)
+        const delta = call++ === 0 ? { tool_calls: [{ index: 0, id: 'c1', type: 'function', function: { name: 'read_file', arguments: '{"path":"app.js"}' } }] } : { content: 'готово' }
+        return new Response(`data: ${JSON.stringify({ choices: [{ delta, finish_reason: call === 1 ? 'tool_calls' : 'stop' }], usage: { prompt_tokens: 1, completion_tokens: 1, cost: 0 } })}\n\ndata: [DONE]\n\n`)
+      }),
+    )
+    const sys: string[] = []
+    for await (const e of runLLM({ model: 'x/y:free', messages: [{ role: 'user', content: 'прочитай' }], tools: ['files_read'], root: 'repos/svc' })) if (e.t === 'error') sys.push(e.message)
+    expect(sys).toEqual([])
+    expect(results[0]).toContain('const secret = 1')
   })
 })
 

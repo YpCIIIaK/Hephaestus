@@ -70,6 +70,33 @@ describe('цель из ответа блока: {{Блок.поле}}', () => {
   })
 })
 
+describe('общие настройки пайплайна', () => {
+  it('папка проекта и общая инструкция — для всех блоков после выбора папки', async () => {
+    const { llm, calls } = fakeLLM((req) => (lastUser(req) === 'выбери' ? '{"target":"repos/app","focus":"инъекции"}' : 'ок'))
+    const tools: { name: string; root?: string }[] = []
+    const tool = async (name: string, _a: Record<string, unknown>, _s?: AbortSignal, o?: { root?: string }) => (tools.push({ name, root: o?.root }), { ok: true, output: 'вывод' })
+    const p = {
+      ...graph(
+        [
+          { id: 't', kind: 'agent', label: 'Выбор репозитория', config: { model: 'm', prompt: 'выбери' } },
+          { id: 'c', kind: 'command', label: 'Скан', config: { command: 'scan' } },
+          { id: 'a', kind: 'agent', label: 'Охотник', config: { model: 'm', prompt: 'ищи' } },
+          { id: 'w', kind: 'write', label: 'Отчёт', config: { path: 'audit/report.md' } },
+        ],
+        [['t', 'c'], ['c', 'a'], ['a', 'w']],
+      ),
+      workdir: '{{Выбор репозитория.target}}',
+      sharedPrompt: 'Фокус: {{Выбор репозитория.focus}}',
+    }
+    await runPipeline(p, 'x', { llm, tool, getAgent })
+    // Сам блок выбора работает во всей рабочей папке — его папка ещё не известна
+    expect(calls[0].root).toBeUndefined()
+    expect(calls[1].root).toBe('repos/app')
+    expect(calls[1].messages[0].content).toContain('Фокус: инъекции')
+    expect(tools).toEqual([{ name: 'run_command', root: 'repos/app' }, { name: 'write_file', root: 'repos/app' }])
+  })
+})
+
 describe('блок «Для каждого»', () => {
   it('делит вход и обрабатывает элементы параллельно, ошибки элементов не роняют блок', async () => {
     let active = 0

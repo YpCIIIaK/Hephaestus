@@ -89,6 +89,14 @@ export interface Pipeline {
   interactions?: boolean
   /** Общая память запуска: блоки записывают находки (session_note) и видят записи друг друга. По умолчанию включена */
   sharedMemory?: boolean
+  /**
+   * Папка проекта для всех блоков — подпапка рабочей папки, можно шаблоном
+   * ({{Выбор репозитория.target}}). Агенты, команды и файлы работают в ней,
+   * как будто это и есть рабочая папка. Пока шаблон не вычислен — вся рабочая папка.
+   */
+  workdir?: string
+  /** Общая инструкция: добавляется к системному промпту каждого агента (можно шаблоны) */
+  sharedPrompt?: string
   nodes: PipelineNode[]
   edges: PipelineEdge[]
   createdAt: string
@@ -149,7 +157,7 @@ export interface PipelineDeps {
   llm: LLMCall
   /** Модель решений для маршрутизаторов и проверок; без неё решает LLM */
   decide?: DecideCall
-  tool: (name: string, args: Record<string, unknown>, signal?: AbortSignal, opts?: { sandbox?: string }) => Promise<{ ok: boolean; output: string }>
+  tool: (name: string, args: Record<string, unknown>, signal?: AbortSignal, opts?: { sandbox?: string; root?: string }) => Promise<{ ok: boolean; output: string }>
   /** Создаёт копию проекта для узла со «своей копией» */
   sandbox?: { create: (label: string) => Promise<string> }
   getAgent: (id: string) => Agent | undefined
@@ -312,7 +320,7 @@ export function failedNodes(run: PipelineRun): string[] {
 }
 
 export async function runPipeline(
-  pipeline: Pick<Pipeline, 'id' | 'name' | 'nodes' | 'edges' | 'interactions' | 'sharedMemory'>,
+  pipeline: Pick<Pipeline, 'id' | 'name' | 'nodes' | 'edges' | 'interactions' | 'sharedMemory' | 'workdir' | 'sharedPrompt'>,
   input: string,
   deps: PipelineDeps,
   hooks: PipelineHooks = {},
@@ -383,6 +391,12 @@ export async function runPipeline(
   const render = (tpl: string | undefined, ctx: ExecContext, fallback: string) =>
     tpl?.trim() ? renderTemplate(tpl, { input: ctx.input, prev: ctx.prevText, byLabel: ctx.byLabel }) : fallback
 
+  /** Папка проекта для блока: шаблон из настроек пайплайна; не вычислен или «.» — вся рабочая папка */
+  const rootFor = (ctx: ExecContext): string | undefined => {
+    const r = render(pipeline.workdir, ctx, '').trim()
+    return !r || r === '.' || r.includes('{{') ? undefined : r
+  }
+
   const addRunUsage = (u?: Usage) => {
     if (u) run.usage = addUsage(run.usage, u)
   }
@@ -396,7 +410,9 @@ export async function runPipeline(
     const sandbox = node.config.isolate ? await ensureSandbox(node) : undefined
     const shared = ctx.prevParts.map((part) => `### ${part.label}\n${part.output}`).join('\n\n')
     const conversation = pipeline.interactions ? run.interactions!.filter((entry) => entry.nodeId !== node.id).map((entry) => `${entry.label}: ${entry.text}`).join('\n\n') : ''
-    const systemPrompt = [cfg.systemPrompt, shared && `Контекст от других узлов этого пайплайна:\n\n${shared}`, conversation && `Общий разговор агентов этого пайплайна. Ты видишь ответы других участников; учитывай их и явно обращайся к ним по имени, если дополняешь или оспариваешь вывод:\n\n${conversation}`].filter(Boolean).join('\n\n')
+    const common = render(pipeline.sharedPrompt, ctx, '').trim()
+    const root = rootFor(ctx)
+    const systemPrompt = [cfg.systemPrompt, common, shared && `Контекст от других узлов этого пайплайна:\n\n${shared}`, conversation && `Общий разговор агентов этого пайплайна. Ты видишь ответы других участников; учитывай их и явно обращайся к ним по имени, если дополняешь или оспариваешь вывод:\n\n${conversation}`].filter(Boolean).join('\n\n')
     if (extraFeedback) user += `\n\n---\n${extraFeedback}`
     const messages = [
       ...(systemPrompt ? [{ role: 'system' as const, content: systemPrompt }] : []),
@@ -442,6 +458,7 @@ export async function runPipeline(
             tools: cfg.tools,
             jsonMode: node.config.jsonMode,
             sandbox,
+            root,
             session: run.memoryId,
             sessionAuthor: override.tag ? `${node.label} · ${override.tag}` : node.label,
           },
@@ -499,7 +516,7 @@ export async function runPipeline(
     const sandbox = sandboxFor(node)
     // Папку можно задать шаблоном: например, {{Выбор репозитория.target}}
     const cwd = render(node.config.cwd, ctx, '').trim()
-    const r = await deps.tool('run_command', { command, cwd: cwd || undefined, timeout_sec: node.config.timeoutSec, raw: true }, signal, { sandbox })
+    const r = await deps.tool('run_command', { command, cwd: cwd || undefined, timeout_sec: node.config.timeoutSec, raw: true }, signal, { sandbox, root: rootFor(ctx) })
     return { ...r, sandbox }
   }
 
@@ -624,7 +641,7 @@ export async function runPipeline(
 
       case 'file': {
         const path = render(node.config.path, ctx, '')
-        const r = await deps.tool('read_file', { path }, signal)
+        const r = await deps.tool('read_file', { path }, signal, { root: rootFor(ctx) })
         if (!r.ok) throw new Error(r.output)
         return { output: r.output, note: path }
       }
@@ -632,7 +649,7 @@ export async function runPipeline(
       case 'write': {
         const path = render(node.config.path, ctx, '')
         const content = render(node.config.template, ctx, ctx.prevText)
-        const r = await deps.tool('write_file', { path, content }, signal)
+        const r = await deps.tool('write_file', { path, content }, signal, { root: rootFor(ctx) })
         if (!r.ok) throw new Error(r.output)
         return { output: content, note: r.output }
       }

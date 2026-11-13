@@ -7,7 +7,7 @@ import { buildTools, runTool, type ToolDefinition } from './tools'
 import { mockStream } from './mock-llm'
 import { parseTextToolCalls, partialTagLength, TEXT_TOOL_CALL_TAG } from './text-tool-calls'
 import { projectContext, withSystemBlock } from './memory'
-import { sandboxTree } from './sandboxes'
+import { resolveScope } from './scope'
 import { appendSessionNote, SESSION_TOOL, sessionContext } from './sessions'
 import { routeModel, runSubscription } from './subscriptions'
 import { runInWorkspace } from './workspace-scope'
@@ -340,19 +340,16 @@ export async function* runLLM(req: LLMRequest, signal?: AbortSignal): AsyncGener
   if (routed !== req.model) yield { t: 'notice', v: `Запрос идёт через подписку: ${routed}` }
   if (isSubscriptionModel(routed)) {
     const run = (r: LLMRequest) => runSubscription(r, signal)
-    if (!req.sandbox) {
-      yield* run({ ...req, model: routed })
-      return
-    }
-    // Своя копия проекта у участника: CLI работает в ней
-    let root: string
+    // Своя копия проекта и/или папка проекта пайплайна: CLI работает в ней
+    let scope: Awaited<ReturnType<typeof resolveScope>>
     try {
-      root = await sandboxTree(req.sandbox)
+      scope = await resolveScope(req.sandbox, req.root)
     } catch (e) {
       yield { t: 'error', message: e instanceof Error ? e.message : String(e), status: 404 }
       return
     }
-    yield* scopedGenerator({ root, sandbox: true }, run({ ...req, model: routed }))
+    if (!scope) yield* run({ ...req, model: routed })
+    else yield* scopedGenerator(scope, run({ ...req, model: routed }))
     return
   }
 
@@ -373,10 +370,10 @@ export async function* runLLM(req: LLMRequest, signal?: AbortSignal): AsyncGener
   const maxSteps = Math.min(req.maxToolSteps ?? (codeWork ? CODE_MAX_STEPS : DEFAULT_MAX_STEPS), MAX_TOOL_STEPS)
   // Участник со своей копией проекта: все инструменты работают внутри копии
   let inScope = <T,>(fn: () => Promise<T>) => fn()
-  if (req.sandbox) {
+  if (req.sandbox || req.root) {
     try {
-      const scope = { root: await sandboxTree(req.sandbox), sandbox: true }
-      inScope = (fn) => runInWorkspace(scope, fn)
+      const scope = await resolveScope(req.sandbox, req.root)
+      if (scope) inScope = (fn) => runInWorkspace(scope, fn)
     } catch (e) {
       yield { t: 'error', message: e instanceof Error ? e.message : String(e), status: 404 }
       return

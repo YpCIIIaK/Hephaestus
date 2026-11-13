@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import { parseBody, rejectCrossSite } from '@/lib/server/http'
-import { sandboxTree } from '@/lib/server/sandboxes'
+import { resolveScope } from '@/lib/server/scope'
 import { runTool } from '@/lib/server/tools'
 import { runInWorkspace } from '@/lib/server/workspace-scope'
 
@@ -14,6 +14,8 @@ const schema = z.object({
   args: z.record(z.string(), z.unknown()),
   /** Выполнить в копии проекта узла со «своей копией» */
   sandbox: z.string().regex(/^sb_[a-z0-9]+$/).optional(),
+  /** Папка проекта пайплайна — подпапка рабочей папки */
+  root: z.string().max(500).optional(),
 })
 
 export async function POST(req: Request) {
@@ -21,12 +23,11 @@ export async function POST(req: Request) {
   if (denied) return denied
   const parsed = await parseBody(req, schema)
   if ('error' in parsed) return parsed.error
-  const { name, args, sandbox } = parsed.data
+  const { name, args, sandbox, root } = parsed.data
   const run = () => runTool(name, args, req.signal)
-  if (!sandbox) return NextResponse.json(await run())
   try {
-    const root = await sandboxTree(sandbox)
-    return NextResponse.json(await runInWorkspace({ root, sandbox: true }, run))
+    const scope = await resolveScope(sandbox, root)
+    return NextResponse.json(scope ? await runInWorkspace(scope, run) : await run())
   } catch (e) {
     return NextResponse.json({ ok: false, output: e instanceof Error ? e.message : String(e) })
   }

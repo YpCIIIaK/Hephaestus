@@ -208,9 +208,9 @@ export const callLLMSafe: LLMCall = async (req, opts = {}) => {
   }
 }
 
-export async function callTool(name: string, args: Record<string, unknown>, signal?: AbortSignal, opts: { sandbox?: string } = {}): Promise<{ ok: boolean; output: string }> {
+export async function callTool(name: string, args: Record<string, unknown>, signal?: AbortSignal, opts: { sandbox?: string; root?: string } = {}): Promise<{ ok: boolean; output: string }> {
   try {
-    const res = await fetch('/api/tools', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, args, sandbox: opts.sandbox }), signal })
+    const res = await fetch('/api/tools', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, args, sandbox: opts.sandbox, root: opts.root }), signal })
     const data = (await res.json()) as { ok?: boolean; output?: string; error?: string }
     if (!res.ok) return { ok: false, output: data.error ?? `Ошибка ${res.status}` }
     return { ok: !!data.ok, output: data.output ?? '' }
