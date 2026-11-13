@@ -1,7 +1,7 @@
 'use client'
 
-import { Handle, Position, type NodeProps, type Node } from '@xyflow/react'
-import { AlertTriangle, Check, CircleSlash, Hourglass } from 'lucide-react'
+import { Handle, NodeToolbar, Position, type NodeProps, type Node } from '@xyflow/react'
+import { AlertTriangle, Check, CircleSlash, Copy, Hourglass, Settings2, Trash2 } from 'lucide-react'
 import { memo } from 'react'
 import { ModelName } from '@/components/model-picker'
 import { Spinner } from '@/components/ui/misc'
@@ -15,6 +15,14 @@ export type ForgeNodeData = {
   run?: NodeRun
   waiting?: boolean
   issue?: 'error' | 'warning'
+  /** Кнопки над выбранным блоком — только в редакторе */
+  actions?: NodeActions
+}
+
+export interface NodeActions {
+  edit: (id: string) => void
+  duplicate: (id: string) => void
+  remove: (id: string) => void
 }
 
 export type ForgeFlowNode = Node<ForgeNodeData, 'forge'>
@@ -67,7 +75,7 @@ function StatusIcon({ run, waiting }: { run?: NodeRun; waiting?: boolean }) {
 }
 
 export const ForgeNodeView = memo(function ForgeNodeView({ data, selected }: NodeProps<ForgeFlowNode>) {
-  const { node, run, waiting, issue } = data
+  const { node, run, waiting, issue, actions } = data
   const style = NODE_STYLE[node.kind]
   const Icon = style.icon
   const routes = node.kind === 'router' ? node.config.routes ?? [] : []
@@ -83,6 +91,19 @@ export const ForgeNodeView = memo(function ForgeNodeView({ data, selected }: Nod
         waiting && 'border-warning',
       )}
     >
+      {actions && (
+        <NodeToolbar isVisible={selected} position={Position.Top} offset={8} className="flex items-center gap-0.5 rounded-lg border border-border bg-surface p-0.5 shadow-float">
+          <button type="button" onClick={() => actions.edit(node.id)} className="flex items-center gap-1 rounded-md px-2 py-1 text-[11.5px] hover:bg-surface-2">
+            <Settings2 className="size-3.5" /> Настроить
+          </button>
+          <button type="button" onClick={() => actions.duplicate(node.id)} className="flex items-center gap-1 rounded-md px-2 py-1 text-[11.5px] hover:bg-surface-2">
+            <Copy className="size-3.5" /> Дублировать
+          </button>
+          <button type="button" onClick={() => actions.remove(node.id)} className="flex items-center gap-1 rounded-md px-2 py-1 text-[11.5px] text-danger hover:bg-danger/10">
+            <Trash2 className="size-3.5" /> Удалить
+          </button>
+        </NodeToolbar>
+      )}
       {node.kind !== 'input' && <Handle type="target" position={Position.Left} />}
       <div className="flex items-center gap-2.5 px-3 pt-2.5">
         <span className="flex size-7 shrink-0 items-center justify-center rounded-lg" style={{ background: `color-mix(in oklch, ${style.color} 16%, transparent)`, color: style.color }}>

@@ -27,12 +27,14 @@ import { modelById, resolveModelId } from '@/lib/stores/catalog'
 import { usePipelines } from '@/lib/stores/pipelines'
 import { estimateTokens } from '@/lib/tokens'
 import { cn, downloadFile, formatCost, uid } from '@/lib/utils'
-import { ForgeNodeView, type ForgeFlowNode } from './forge-node'
+import { ForgeEdge, type ForgeFlowEdge } from './forge-edge'
+import { ForgeNodeView, type ForgeFlowNode, type NodeActions } from './forge-node'
 import { Inspector } from './inspector'
 import { NODE_STYLE, PALETTE_ORDER } from './node-meta'
 import { RunPanel } from './run-panel'
 
 const nodeTypes = { forge: ForgeNodeView }
+const edgeTypes = { forge: ForgeEdge }
 
 const DEFAULT_CONFIG: Partial<Record<NodeKind, PipelineNode['config']>> = {
   agent: { model: '@default' },
@@ -108,6 +110,12 @@ function Canvas({ pipeline, onChange }: { pipeline: Pipeline; onChange: (p: Pipe
   // Холст строится из данных пайплайна заново при каждом изменении. React Flow
   // прячет узлы, пока не знает их размеров, а во время перетаскивания заново их
   // не замеряет — без сохранённых размеров весь холст пропадал до отпускания мыши.
+  // Кнопки над выбранным блоком; ссылка не меняется, чтобы не перерисовывать все блоки
+  const actionsRef = useRef<NodeActions | null>(null)
+  const nodeActions: NodeActions = useMemo(
+    () => ({ edit: (id) => actionsRef.current?.edit(id), duplicate: (id) => actionsRef.current?.duplicate(id), remove: (id) => actionsRef.current?.remove(id) }),
+    [],
+  )
   const [measured, setMeasured] = useState<Record<string, { width: number; height: number }>>({})
   const [dragging, setDragging] = useState<string | null>(null)
 
@@ -120,18 +128,27 @@ function Canvas({ pipeline, onChange }: { pipeline: Pipeline; onChange: (p: Pipe
         measured: measured[n.id],
         dragging: dragging === n.id,
         selected: n.id === selectedId,
-        data: { node: n, run: currentRun?.pipelineId === pipeline.id ? currentRun.nodes[n.id] : undefined, waiting: runner?.waitingFor === n.id, issue: issueByNode.get(n.id) },
+        data: { node: n, run: currentRun?.pipelineId === pipeline.id ? currentRun.nodes[n.id] : undefined, waiting: runner?.waitingFor === n.id, issue: issueByNode.get(n.id), actions: nodeActions },
       })),
-    [pipeline.nodes, selectedId, currentRun, runner?.waitingFor, issueByNode, pipeline.id, measured, dragging],
+    [pipeline.nodes, selectedId, currentRun, runner?.waitingFor, issueByNode, pipeline.id, measured, dragging, nodeActions],
   )
 
-  const flowEdges: Edge[] = useMemo(
+  const [selectedEdge, setSelectedEdge] = useState<string | null>(null)
+  const deleteEdge = useCallback(
+    (id: string) => {
+      onChange({ ...pipeline, edges: pipeline.edges.filter((e) => e.id !== id), updatedAt: new Date().toISOString() })
+      setSelectedEdge(null)
+    },
+    [pipeline, onChange],
+  )
+
+  const flowEdges: ForgeFlowEdge[] = useMemo(
     () =>
       pipeline.edges.map((e) => {
         const live = currentRun?.status === 'running' && currentRun.nodes[e.target]?.status === 'running' && currentRun.nodes[e.source]?.status === 'done'
-        return { id: e.id, source: e.source, target: e.target, sourceHandle: e.sourceHandle ?? undefined, className: live ? 'edge-live' : undefined, animated: false }
+        return { id: e.id, type: 'forge', source: e.source, target: e.target, sourceHandle: e.sourceHandle ?? undefined, className: live ? 'edge-live' : undefined, animated: false, selected: e.id === selectedEdge, data: { onDelete: deleteEdge } }
       }),
-    [pipeline.edges, currentRun],
+    [pipeline.edges, currentRun, selectedEdge, deleteEdge],
   )
 
   const patchNodes = (fn: (nodes: PipelineNode[]) => PipelineNode[], edges = pipeline.edges) => onChange({ ...pipeline, nodes: fn(pipeline.nodes), edges, updatedAt: new Date().toISOString() })
@@ -157,6 +174,7 @@ function Canvas({ pipeline, onChange }: { pipeline: Pipeline; onChange: (p: Pipe
           if (selectedId === ch.id) setSelectedId(null)
           changed = true
         } else if (ch.type === 'select' && ch.selected) {
+          setSelectedEdge(null)
           setSelectedId(ch.id)
           setPanel('node')
         }
@@ -167,7 +185,8 @@ function Canvas({ pipeline, onChange }: { pipeline: Pipeline; onChange: (p: Pipe
   )
 
   const onEdgesChange = useCallback(
-    (changes: EdgeChange[]) => {
+    (changes: EdgeChange<ForgeFlowEdge>[]) => {
+      for (const c of changes) if (c.type === 'select') setSelectedEdge((cur) => (c.selected ? c.id : cur === c.id ? null : cur))
       const removed = new Set(changes.filter((c) => c.type === 'remove').map((c) => c.id))
       if (removed.size) onChange({ ...pipeline, edges: pipeline.edges.filter((e) => !removed.has(e.id)), updatedAt: new Date().toISOString() })
     },
@@ -225,6 +244,33 @@ function Canvas({ pipeline, onChange }: { pipeline: Pipeline; onChange: (p: Pipe
     else if (result.status === 'error') toast.error('Пайплайн завершился с ошибкой', { description: result.error })
   }
 
+  const deleteNode = (id: string) => {
+    patchNodes(
+      (nodes) => nodes.filter((n) => n.id !== id),
+      pipeline.edges.filter((e) => e.source !== id && e.target !== id),
+    )
+    setSelectedId(null)
+    setPanel('run')
+  }
+  const duplicateNode = (id: string) => {
+    const src = pipeline.nodes.find((n) => n.id === id)
+    if (!src) return
+    const copy: PipelineNode = { ...structuredClone(src), id: uid('n'), label: uniqueLabel(pipeline.nodes, src.label), position: { x: src.position.x + 40, y: src.position.y + 60 } }
+    patchNodes((nodes) => [...nodes, copy])
+    setSelectedId(copy.id)
+    setPanel('node')
+  }
+
+  actionsRef.current = {
+    edit: (id) => {
+      setSelectedId(id)
+      setPanel('node')
+      setMobilePanel(true)
+    },
+    duplicate: duplicateNode,
+    remove: deleteNode,
+  }
+
   const sidePanel =
     panel === 'node' && selected ? (
       <Inspector
@@ -237,19 +283,8 @@ function Canvas({ pipeline, onChange }: { pipeline: Pipeline; onChange: (p: Pipe
           setPanel('run')
         }}
         onChange={(patch) => patchNodes((nodes) => nodes.map((n) => (n.id === selected.id ? { ...n, ...patch } : n)))}
-        onDelete={() => {
-          patchNodes(
-            (nodes) => nodes.filter((n) => n.id !== selected.id),
-            pipeline.edges.filter((e) => e.source !== selected.id && e.target !== selected.id),
-          )
-          setSelectedId(null)
-          setPanel('run')
-        }}
-        onDuplicate={() => {
-          const copy: PipelineNode = { ...structuredClone(selected), id: uid('n'), label: uniqueLabel(pipeline.nodes, selected.label), position: { x: selected.position.x + 40, y: selected.position.y + 60 } }
-          patchNodes((nodes) => [...nodes, copy])
-          setSelectedId(copy.id)
-        }}
+        onDelete={() => deleteNode(selected.id)}
+        onDuplicate={() => duplicateNode(selected.id)}
       />
     ) : (
       <RunPanel pipeline={pipeline} run={currentRun?.pipelineId === pipeline.id ? currentRun : undefined} onRun={run} onRerun={(prev, ids) => void rerun(prev, ids)} onSelectRun={setViewRunId} onSelectNode={(id) => { setSelectedId(id); setPanel('node') }} onChange={onChange} />
@@ -273,14 +308,20 @@ function Canvas({ pipeline, onChange }: { pipeline: Pipeline; onChange: (p: Pipe
           if (kind) addNode(kind, rf.screenToFlowPosition({ x: e.clientX - 115, y: e.clientY - 30 }))
         }}
       >
-        <ReactFlow<ForgeFlowNode>
+        <ReactFlow<ForgeFlowNode, ForgeFlowEdge>
           nodes={flowNodes}
           edges={flowEdges}
+          edgeTypes={edgeTypes}
           nodeTypes={nodeTypes}
           onNodesChange={onNodesChange}
           onEdgesChange={onEdgesChange}
           onConnect={onConnect}
+          onEdgeClick={(_, e) => {
+            setSelectedEdge(e.id)
+            setSelectedId(null)
+          }}
           onPaneClick={() => {
+            setSelectedEdge(null)
             setSelectedId(null)
             setPanel('run')
           }}
