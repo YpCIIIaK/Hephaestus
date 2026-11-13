@@ -99,6 +99,7 @@ function killTree(child: ChildProcess) {
 
 async function prepare(command: string, cwd?: string) {
   const { mode, timeoutSec } = await getTerminalSettings()
+  await ensureHelpers()
   if (mode !== 'full') throw new TerminalError('Терминал выключен. Включите его в настройках: Настройки → Рабочая папка и терминал')
   checkCommand(command)
   const dir = await resolveWorkspacePath(cwd ?? '')
@@ -131,7 +132,41 @@ export function spawnEnv(): NodeJS.ProcessEnv {
   return { ...rest, ...toolsEnv(getToolsDir(), basePath ?? '') } as NodeJS.ProcessEnv
 }
 
+/**
+ * Вспомогательные утилиты Hephaestus для команд моделей и блоков Кузницы —
+ * кладутся в общую папку инструментов (её bin в PATH), одинаково работают
+ * в Windows и Linux. Обновляются при каждом запуске сервера.
+ */
+const HELPERS = ['deps-audit']
+let helpersReady: Promise<void> | null = null
+
+export function ensureHelpers(): Promise<void> {
+  helpersReady ??= (async () => {
+    const bin = path.join(getToolsDir(), 'bin')
+    await fs.promises.mkdir(/* turbopackIgnore: true */ bin, { recursive: true })
+    for (const name of HELPERS) {
+      const src = await fs.promises.readFile(/* turbopackIgnore: true */ path.join(process.cwd(), 'lib/server/helpers', `${name}.mjs`), 'utf8').catch(() => null)
+      if (src == null) continue
+      const script = path.join(bin, `heph-${name}.mjs`)
+      await fs.promises.writeFile(/* turbopackIgnore: true */ script, src)
+      if (process.platform === 'win32') {
+        await fs.promises.writeFile(/* turbopackIgnore: true */ path.join(bin, `heph-${name}.cmd`), `@node "%~dp0heph-${name}.mjs" %*\r\n`)
+      } else {
+        const sh = path.join(bin, `heph-${name}`)
+        await fs.promises.writeFile(/* turbopackIgnore: true */ sh, `#!/bin/sh\nexec node "$(dirname "$0")/heph-${name}.mjs" "$@"\n`)
+        await fs.promises.chmod(/* turbopackIgnore: true */ sh, 0o755)
+      }
+    }
+  })().catch(() => {
+    helpersReady = null
+  })
+  return helpersReady
+}
+
 function start(command: string, cwdAbs: string): ChildProcess {
+  // cmd.exe по умолчанию выводит текст в кодировке консоли (CP866) — русский
+  // текст превращался в кракозябры. Переключаем консоль команды на UTF-8
+  if (process.platform === 'win32') command = `chcp 65001>nul & ${command}`
   return spawn(command, {
     ...shellFor(),
     cwd: cwdAbs,

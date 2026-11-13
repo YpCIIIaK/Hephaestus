@@ -95,6 +95,20 @@ describe('команда для блока Кузницы', () => {
   })
 })
 
+describe('heph-deps-audit', () => {
+  it('ставится в общую папку инструментов и находит менеджер пакетов', async () => {
+    const { saveServerSettings } = await import('@/lib/server/settings')
+    const { runTool } = await import('@/lib/server/tools')
+    await saveServerSettings({ terminal: 'full' })
+    await fs.mkdir(path.join(dir, 'nolock'), { recursive: true })
+    await fs.writeFile(path.join(dir, 'nolock/package.json'), '{"name":"x"}')
+    const r = await runTool('run_command', { command: 'heph-deps-audit', cwd: 'nolock', raw: true })
+    expect(r.output).toContain('без lock-файла')
+    expect(await fs.readdir(path.join(toolsDir, 'bin'))).toEqual(expect.arrayContaining(['heph-deps-audit', 'heph-deps-audit.mjs']))
+    await saveServerSettings({ terminal: 'off' })
+  })
+})
+
 describe('папка проекта в запросе модели', () => {
   it('инструменты модели работают в подпапке, как в рабочей папке', async () => {
     await fs.mkdir(path.join(dir, 'repos/svc'), { recursive: true })
