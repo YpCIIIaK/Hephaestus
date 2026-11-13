@@ -2,7 +2,7 @@
 
 import { create } from 'zustand'
 import { buildChatMessages, buildCompactionMessages, buildJudgeMessages, buildTitleMessages, compactionPlan, fallbackTitle, parseJudge, parseTitle, targetKey, userContent, type ChatReply, type ChatTarget, type ChatTurn, type Conversation, type ReplySandbox } from '../engine/chat'
-import { runPipeline } from '../engine/pipeline'
+import { runPipeline, type NodeRun } from '../engine/pipeline'
 import { detectRefusal, REFUSAL_CLARIFICATION } from '../engine/refusal'
 import { shortModelName } from '../models'
 import { getAgent } from '../stores/agents'
@@ -115,13 +115,24 @@ async function runTarget(conv: Conversation, turnIndex: number, target: ChatTarg
     const runId = uid('run')
     const store = usePipelines.getState()
     store.addRun({ id: runId, pipelineId: pipeline.id, pipelineName: pipeline.name, input: turn.tasks?.[key] ?? turn.user, status: 'running', startedAt: started, nodes: {}, usage: { promptTokens: 0, completionTokens: 0, cost: 0 } })
+    patchReply(conv.id, turn.id, key, { pipelineRun: { runId, pipelineId: pipeline.id } })
+    // Поток токенов по блокам склеиваем, чтобы схема в чате не перерисовывалась на каждый токен
+    const buffer = new Map<string, Partial<NodeRun>>()
+    let timer: ReturnType<typeof setTimeout> | null = null
+    const flush = () => {
+      timer = null
+      for (const [nodeId, patch] of buffer) usePipelines.getState().patchNodeRun(runId, nodeId, patch)
+      buffer.clear()
+    }
     const run = await runPipeline(
       pipeline,
       userContent(turn, key),
       { llm: callLLMSafe, tool: callTool, getAgent, decide: getDecider(), defaults: pipelineDefaults(), sandbox: pipelineSandbox },
       {
         onNode: (nodeId, p) => {
-          usePipelines.getState().patchNodeRun(runId, nodeId, p)
+          buffer.set(nodeId, { ...buffer.get(nodeId), ...p })
+          if (p.status && p.status !== 'running') flush()
+          else timer ??= setTimeout(flush, 80)
           if (p.status === 'done' || p.status === 'skipped' || p.status === 'error') done++
           const node = pipeline.nodes.find((n) => n.id === nodeId)
           if (p.status === 'running' || p.status === 'done') patchReply(conv.id, turn.id, key, { progress: { done, total, current: p.status === 'running' ? node?.label : undefined } })
@@ -129,6 +140,8 @@ async function runTarget(conv: Conversation, turnIndex: number, target: ChatTarg
       },
       { signal, runId },
     )
+    if (timer) clearTimeout(timer)
+    flush()
     usePipelines.getState().patchRun(runId, run)
     patchReply(conv.id, turn.id, key, {
       status: run.status === 'aborted' ? 'stopped' : run.status === 'error' && !run.output ? 'error' : 'done',

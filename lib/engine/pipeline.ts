@@ -119,7 +119,7 @@ export interface NodeRun {
   /** «Для каждого»: сколько элементов обработано */
   items?: { done: number; total: number; failed: number }
   /** «Для каждого»: результат по каждому элементу — при перезапуске успешные не пересчитываются */
-  itemResults?: { item: string; text: string; ok: boolean }[]
+  itemResults?: { item: string; text: string; ok: boolean; pending?: boolean }[]
   /** Модели, которые отказались выполнять задачу блока */
   refusals?: string[]
   /** Результат взят из прошлого запуска (перезапуск с блока или «повторить упавшие») */
@@ -586,7 +586,8 @@ export async function runPipeline(
               }
             }
             done++
-            update(node.id, { items: { done, total: items.length, failed }, note: `${done} из ${items.length}${failed ? `, ошибок ${failed}` : ''}` })
+            // Результаты по элементам — по мере готовности: в логах блока видно, что уже проверено
+            update(node.id, { items: { done, total: items.length, failed }, itemResults: Array.from(itemResults, (r, k) => r ?? { item: items[k], text: '', ok: false, pending: true }), note: `${done} из ${items.length}${failed ? `, ошибок ${failed}` : ''}` })
           }
         }
         await Promise.all(Array.from({ length: Math.min(parallel, items.length) }, worker))

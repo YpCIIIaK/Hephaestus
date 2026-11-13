@@ -1,6 +1,6 @@
 'use client'
 
-import { AlertTriangle, CheckCircle2, CircleSlash, Clock, Footprints, History, Play, RotateCcw } from 'lucide-react'
+import { AlertTriangle, CheckCircle2, CircleSlash, Clock, Footprints, History, Maximize2, Play, RotateCcw } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { CopyButton, Markdown } from '@/components/markdown'
 import { Button } from '@/components/ui/button'
@@ -14,6 +14,7 @@ import { api } from '@/lib/client/llm'
 import { usePipelines } from '@/lib/stores/pipelines'
 import { cn, formatMs, formatRelative } from '@/lib/utils'
 import { NODE_STYLE } from './node-meta'
+import { RunFullscreen } from './run-graph'
 
 const inputs = new Map<string, string>()
 
@@ -90,6 +91,7 @@ export function RunPanel({ pipeline, run, onRun, onRerun, onSelectRun, onSelectN
   const runs = usePipelines((s) => s.runs)
   const history = useMemo(() => runs.filter((r) => r.pipelineId === pipeline.id), [runs, pipeline.id])
   const finished = run && run.status !== 'running'
+  const [full, setFull] = useState(false)
   const done = run ? Object.values(run.nodes).filter((n) => n.status === 'done' || n.status === 'skipped' || n.status === 'error').length : 0
 
   return (
@@ -172,7 +174,11 @@ export function RunPanel({ pipeline, run, onRun, onRerun, onSelectRun, onSelectN
                   {done}/{pipeline.nodes.length} узлов
                 </span>
               )}
+              <Button size="sm" variant="ghost" className="ml-auto" onClick={() => setFull(true)} title="Живая схема запуска на весь экран: движение по блокам и логи каждого блока">
+                <Maximize2 /> На весь экран
+              </Button>
             </div>
+            {full && <RunFullscreen pipeline={pipeline} run={run} onClose={() => setFull(false)} />}
             {finished && <UsageLine usage={run.usage} />}
             {finished && !active && failedNodes(run).length > 0 && (
               <Button variant="primary" size="sm" onClick={() => onRerun(run, failedNodes(run))} title="Упавшие блоки и всё, что после них, выполнятся заново; готовые результаты и успешные элементы «Для каждого» возьмутся из этого запуска">

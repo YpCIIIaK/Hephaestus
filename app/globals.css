@@ -385,6 +385,14 @@
     stroke-dashoffset: -20;
   }
 }
+/* Схема запуска: пройденный путь — цветом, ещё не пройденный — бледно */
+.edge-done .react-flow__edge-path {
+  stroke: color-mix(in oklch, var(--accent) 55%, var(--border-strong));
+  stroke-width: 2;
+}
+.edge-idle .react-flow__edge-path {
+  opacity: 0.45;
+}
 .edge-live .react-flow__edge-path {
   stroke: var(--accent);
   stroke-dasharray: 6 4;

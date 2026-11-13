@@ -10,9 +10,9 @@ import { FieldRow, Input, NativeSelect, Textarea } from '@/components/ui/field'
 import { Badge, Segmented } from '@/components/ui/misc'
 import { Slider, Switch } from '@/components/ui/overlay'
 import { UsageLine } from '@/components/usage-line'
-import { effectiveAgentConfig, NODE_META, type NodeConfig, type NodeRun, type Pipeline, type PipelineNode } from '@/lib/engine/pipeline'
+import { effectiveAgentConfig, itemTitle, NODE_META, type NodeConfig, type NodeRun, type Pipeline, type PipelineNode } from '@/lib/engine/pipeline'
 import { getAgent, useAllAgents } from '@/lib/stores/agents'
-import { uid } from '@/lib/utils'
+import { cn, uid } from '@/lib/utils'
 import { NODE_STYLE } from './node-meta'
 import { SandboxChanges } from './sandbox-changes'
 
@@ -331,6 +331,37 @@ function ConfigFields({ node, pipeline, set }: { node: PipelineNode; pipeline: P
   }
 }
 
+/** «Для каждого»: элементы со статусом и результатом каждого */
+function ItemResults({ items, running }: { items: NonNullable<NodeRun['itemResults']>; running: boolean }) {
+  const ok = items.filter((i) => i.ok).length
+  const failed = items.filter((i) => !i.ok && !i.pending).length
+  return (
+    <details className="rounded-xl border border-border p-3" open>
+      <summary className="cursor-pointer text-xs font-semibold">
+        Элементы · {ok} готово{failed ? ` · ${failed} с ошибкой` : ''}
+        {running ? ' · идёт' : ''}
+      </summary>
+      <div className="mt-2 space-y-1">
+        {items.map((it, i) => (
+          <details key={i} className={cn('rounded-lg border px-2.5 py-1.5', it.pending ? 'border-border opacity-60' : it.ok ? 'border-border' : 'border-danger/30 bg-danger/5')}>
+            <summary className="flex cursor-pointer items-center gap-2 text-xs">
+              <span className={cn('size-1.5 shrink-0 rounded-full', it.pending ? 'bg-faint' : it.ok ? 'bg-success' : 'bg-danger')} />
+              <span className="font-mono text-faint">{i + 1}</span>
+              <span className="min-w-0 truncate">{itemTitle(it.item)}</span>
+              {it.pending && <span className="ml-auto text-faint">в очереди или идёт</span>}
+            </summary>
+            {!it.pending && (
+              <div className="mt-2">
+                <Markdown text={it.text} className="text-[12.5px]" />
+              </div>
+            )}
+          </details>
+        ))}
+      </div>
+    </details>
+  )
+}
+
 export function NodeOutput({ run }: { run: NodeRun }) {
   return (
     <div className="space-y-3">
@@ -357,6 +388,7 @@ export function NodeOutput({ run }: { run: NodeRun }) {
       {run.systemPrompt && <details className="rounded-xl border border-border p-3"><summary className="cursor-pointer text-xs font-semibold">Инструкция модели</summary><div className="mt-2 max-h-64 overflow-y-auto whitespace-pre-wrap break-words text-xs">{run.systemPrompt}</div></details>}
       {run.prompt && <details className="rounded-xl border border-border p-3"><summary className="cursor-pointer text-xs font-semibold">Запрос модели</summary><div className="mt-2 max-h-64 overflow-y-auto whitespace-pre-wrap break-words text-xs">{run.prompt}</div></details>}
       {run.reasoning && <details className="rounded-xl border border-border p-3"><summary className="cursor-pointer text-xs font-semibold">Рассуждения, переданные моделью</summary><div className="mt-2 max-h-64 overflow-y-auto whitespace-pre-wrap break-words text-xs">{run.reasoning}</div></details>}
+      {!!run.itemResults?.length && <ItemResults items={run.itemResults} running={run.status === 'running'} />}
       {!!run.tools?.length && <ToolTraceList tools={run.tools} />}
       {run.sandbox && run.status !== 'running' && <SandboxChanges id={run.sandbox} />}
       {run.error && <div className="rounded-lg border border-danger/25 bg-danger/8 p-2.5 text-[13px] text-danger">{run.error}</div>}

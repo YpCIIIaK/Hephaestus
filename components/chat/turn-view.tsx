@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button'
 import { Badge, Spinner } from '@/components/ui/misc'
 import { Tip } from '@/components/ui/overlay'
 import { UsageLine } from '@/components/usage-line'
+import { PipelineRunView } from './pipeline-run-view'
 import { toast } from 'sonner'
 import { applySandboxChanges, canJudge, describeTarget, discardSandbox, judgeTurn, regenerate, sandboxPatch } from '@/lib/client/chat-runner'
 import { participantColor } from '@/lib/colors'
@@ -188,7 +189,9 @@ const ReplyCard = memo(function ReplyCard({
             {streaming && <Spinner className="size-3.5 text-accent" />}
           </div>
         )}
-        {reply.progress && streaming && (
+        {reply.pipelineRun ? (
+          <PipelineRunView runId={reply.pipelineRun.runId} pipelineId={reply.pipelineRun.pipelineId} streaming={streaming} />
+        ) : reply.progress && streaming && (
           <div className="flex items-center gap-2 text-xs text-muted">
             <div className="h-1 w-24 overflow-hidden rounded-full bg-surface-3">
               <div className="h-full bg-accent transition-[width]" style={{ width: `${(reply.progress.done / Math.max(1, reply.progress.total)) * 100}%` }} />

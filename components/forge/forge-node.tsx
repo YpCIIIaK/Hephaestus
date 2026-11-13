@@ -100,6 +100,14 @@ export const ForgeNodeView = memo(function ForgeNodeView({ data, selected }: Nod
       </div>
       {run && (run.status === 'done' || run.status === 'error' || run.status === 'running') && (
         <div className="border-t border-border px-3 py-1.5">
+          {run.items && run.items.total > 0 && (
+            <div className="mb-1 flex items-center gap-1.5 font-mono text-[10px] text-faint">
+              <span className="h-1 flex-1 overflow-hidden rounded-full bg-surface-3">
+                <span className={cn('block h-full rounded-full transition-[width] duration-500', run.items.failed ? 'bg-warning' : 'bg-accent')} style={{ width: `${(run.items.done / run.items.total) * 100}%` }} />
+              </span>
+              {run.items.done}/{run.items.total}
+            </div>
+          )}
           {run.status === 'error' ? (
             <div className="line-clamp-2 text-[11px] text-danger">{run.error}</div>
           ) : (

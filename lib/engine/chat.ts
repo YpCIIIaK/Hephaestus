@@ -34,6 +34,8 @@ export interface ChatReply {
   rating?: 1 | -1
   /** Для пайплайнов — прогресс узлов */
   progress?: { done: number; total: number; current?: string }
+  /** Ответ пайплайна: какой запуск показывать живой схемой */
+  pipelineRun?: { runId: string; pipelineId: string }
   /** Участник работал в своей копии проекта: что он в ней изменил */
   sandbox?: ReplySandbox
 }
