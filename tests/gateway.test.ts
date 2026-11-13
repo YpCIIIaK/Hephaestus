@@ -188,6 +188,15 @@ describe('шлюз: вызовы инструментов текстом', async
     ])
     expect(parseTextToolCalls('<tool_call>{"name": "web_search", "arguments": "{\\"query\\": \\"x\\"}"}', ['web_search'])[0].function.arguments).toBe('{"query":"x"}')
     expect(parseTextToolCalls('обычный ответ', ['web_search'])).toEqual([])
+    // формат GLM — так отвечал узел «Перепроверка» в пайплайне аудита
+    const glm = parseTextToolCalls(
+      'Проверю.<tool_call>read_file<arg_key>path</arg_key><arg_value>lib/clone-runner.ts</arg_value><arg_key>end_line</arg_key><arg_value>150</arg_value></tool_call><tool_call>search_code<arg_key>glob</arg_key><arg_value>app/**</arg_value><arg_key>pattern</arg_key><arg_value>esc\\(</arg_value></tool_call>',
+      ['read_file', 'search_code'],
+    )
+    expect(glm.map((c) => [c.function.name, JSON.parse(c.function.arguments)])).toEqual([
+      ['read_file', { path: 'lib/clone-runner.ts', end_line: 150 }],
+      ['search_code', { glob: 'app/**', pattern: 'esc\\(' }],
+    ])
   })
 
   it('придерживает только возможное начало тега', () => {

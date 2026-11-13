@@ -440,7 +440,11 @@ export async function* runSubscription(req: LLMRequest, signal?: AbortSignal): A
     const write = (req.tools ?? []).some((t) => t === 'files_write' || (t === 'terminal' && terminal))
     args = codexArgs(model, write ? 'workspace-write' : 'read-only', effort)
     // У codex exec нет отдельного системного промпта — передаём инструкции в начале запроса
-    if (fullSystem) input = `<instructions>\n${fullSystem}\n</instructions>\n\n${prompt}`
+    // В режиме read-only модель иначе пытается записать файл, получает отказ и
+    // пишет в ответе «сохранить невозможно», хотя результат сохранит сам Hephaestus
+    const readOnlyNote = write ? '' : 'Запись файлов тебе не выдана: не пытайся создавать или менять файлы и не сообщай об этом как о проблеме. Верни результат целиком текстом ответа — при необходимости его сохранит следующий шаг.'
+    const instructions = [fullSystem, readOnlyNote].filter(Boolean).join('\n\n')
+    if (instructions) input = `<instructions>\n${instructions}\n</instructions>\n\n${prompt}`
   }
 
   const child = spawn(cfg.bin, args, { cwd, env: subscriptionEnv(), shell: process.platform === 'win32', windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] })

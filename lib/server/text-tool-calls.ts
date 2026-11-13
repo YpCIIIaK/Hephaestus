@@ -28,6 +28,13 @@ function parseBlock(body: string): { name: string; args: Record<string, unknown>
     for (const p of fn[2].matchAll(/<parameter=([\w.-]+)>([\s\S]*?)<\/parameter>/g)) args[p[1]] = paramValue(p[2])
     return { name: fn[1], args }
   }
+  // Формат GLM: имя инструмента, затем пары <arg_key>…</arg_key><arg_value>…</arg_value>
+  const glm = body.match(/^\s*([\w.-]+)\s*(<arg_key>[\s\S]*)?$/)
+  if (glm && (glm[2] || !body.trim().startsWith('{'))) {
+    const args: Record<string, unknown> = {}
+    for (const p of (glm[2] ?? '').matchAll(/<arg_key>([\s\S]*?)<\/arg_key>\s*<arg_value>([\s\S]*?)<\/arg_value>/g)) args[p[1].trim()] = paramValue(p[2])
+    return { name: glm[1], args }
+  }
   const j = extractJson<{ name?: unknown; arguments?: unknown; parameters?: unknown }>(body)
   if (!j || typeof j.name !== 'string') return null
   const rawArgs = j.arguments ?? j.parameters ?? {}
