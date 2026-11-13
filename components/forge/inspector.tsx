@@ -241,6 +241,9 @@ function ConfigFields({ node, pipeline, set }: { node: PipelineNode; pipeline: P
               <Input type="number" min={1} max={10} value={c.concurrency ?? 3} onChange={(e) => set({ concurrency: Number(e.target.value) || undefined })} />
             </FieldRow>
           </div>
+          <FieldRow label="Элементы из файла" hint="Путь в папке проекта, например audit/candidates.json. Если файл есть — элементы берутся из него, иначе из ответа предыдущего блока">
+            <Input value={c.itemsFile ?? ''} onChange={(e) => set({ itemsFile: e.target.value || undefined })} placeholder="из ответа предыдущего блока" className="font-mono" />
+          </FieldRow>
           <AgentFields node={node} set={set} pipeline={pipeline} />
         </>
       )

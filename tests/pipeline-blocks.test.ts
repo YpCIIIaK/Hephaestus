@@ -134,6 +134,27 @@ describe('блок «Для каждого»', () => {
     expect(run.nodes.f.output).toContain('### 2. C2 xss\n[ошибка: отказ]')
   })
 
+  it('элементы из файла, если предыдущий блок ответил текстом; без файла — понятная ошибка', async () => {
+    const { llm, calls } = fakeLLM((req) => (lastUser(req) === 'отсей' ? 'Кандидаты сохранены в audit/candidates.json' : `проверено ${lastUser(req)}`))
+    const files: Record<string, string> = { 'audit/candidates.json': '{"candidates":[{"id":"C1"},{"id":"C2"}]}' }
+    const tool = async (name: string, a: Record<string, unknown>) =>
+      name === 'read_file' && files[String(a.path)] ? { ok: true, output: files[String(a.path)] } : { ok: false, output: 'Файл не найден' }
+    const g = (itemsFile?: string) =>
+      graph(
+        [
+          { id: 't', kind: 'agent', label: 'Отсев', config: { model: 'm', prompt: 'отсей' } },
+          { id: 'f', kind: 'foreach', label: 'Охотник', config: { model: 'm', splitBy: 'json', itemsFile, prompt: '{{item}}', retries: 0 } },
+        ],
+        [['t', 'f']],
+      )
+    const run = await runPipeline(g('audit/candidates.json'), 'x', { llm, tool, getAgent })
+    expect(run.nodes.f.items).toEqual({ done: 2, total: 2, failed: 0 })
+    expect(run.nodes.f.note).toContain('из audit/candidates.json')
+    expect(calls.slice(1).map((c) => JSON.parse(lastUser(c)).id)).toEqual(['C1', 'C2'])
+    const bad = await runPipeline(g(), 'x', { llm, tool, getAgent })
+    expect(bad.nodes.f.error).toContain('Элементы из файла')
+  })
+
   it('деление: строки, разделы Markdown, массив JSON', () => {
     expect(splitItems('1. a\n2) b\n\n* c', 'lines')).toEqual(['a', 'b', 'c'])
     expect(splitItems('# Кандидаты\n## A\nтекст a\n## B\nтекст b', 'blocks')).toEqual(['## A\nтекст a', '## B\nтекст b'])

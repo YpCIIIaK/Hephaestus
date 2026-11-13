@@ -63,6 +63,8 @@ export interface NodeConfig {
   splitBy?: 'lines' | 'blocks' | 'json'
   /** Сколько элементов обрабатывать одновременно */
   concurrency?: number
+  /** «Для каждого»: брать элементы из файла (путь в папке проекта), а не из ответа предыдущего блока */
+  itemsFile?: string
 }
 
 export interface PipelineNode {
@@ -570,7 +572,24 @@ export async function runPipeline(
       }
 
       case 'foreach': {
-        const items = splitItems(ctx.prevText, node.config.splitBy ?? 'blocks').slice(0, Math.max(1, Math.min(node.config.limit ?? 20, 200)))
+        // Элементы — из файла, если он задан и читается (модели часто пишут список в файл, а отвечают текстом)
+        let source = ctx.prevText
+        let from = ''
+        const file = render(node.config.itemsFile, ctx, '').trim()
+        if (file) {
+          const r = await deps.tool('read_file', { path: file, raw: true }, signal, { root: rootFor(ctx) })
+          if (r.ok && r.output.trim()) {
+            source = r.output
+            from = ` · из ${file}`
+          }
+        }
+        let parsed: string[]
+        try {
+          parsed = splitItems(source, node.config.splitBy ?? 'blocks')
+        } catch (e) {
+          throw new Error(`${e instanceof Error ? e.message : String(e)}. ${file ? `Файл ${file} не найден или пуст, а ` : ''}Предыдущий блок ответил текстом без массива — пусть он отвечает только JSON-массивом${file ? '' : ', или укажите в блоке «Элементы из файла», куда он сохраняет список'}`)
+        }
+        const items = parsed.slice(0, Math.max(1, Math.min(node.config.limit ?? 20, 200)))
         if (!items.length) return { output: 'Нет элементов для обработки', note: '0 элементов' }
         const parallel = Math.max(1, Math.min(node.config.concurrency ?? 3, 10))
         const results: string[] = new Array(items.length)
@@ -581,7 +600,7 @@ export async function runPipeline(
         let done = 0
         let failed = 0
         let reusedItems = 0
-        update(node.id, { items: { done, total: items.length, failed }, note: `0 из ${items.length}` })
+        update(node.id, { items: { done, total: items.length, failed }, note: `0 из ${items.length}${from}` })
         let next = 0
         const worker = async () => {
           while (next < items.length) {
@@ -614,7 +633,7 @@ export async function runPipeline(
         await Promise.all(Array.from({ length: Math.min(parallel, items.length) }, worker))
         if (failed === items.length) throw new Error(`Все ${items.length} элементов завершились ошибкой: ${results[0]}`)
         const title = (item: string) => itemTitle(item)
-        const tail = `${failed ? `, ошибок ${failed}` : ''}${reusedItems ? `, из прошлого запуска ${reusedItems}` : ''}`
+        const tail = `${failed ? `, ошибок ${failed}` : ''}${reusedItems ? `, из прошлого запуска ${reusedItems}` : ''}${from}`
         return { output: results.map((r, i) => `### ${i + 1}. ${title(items[i])}\n${r}`).join('\n\n'), usage, itemResults, note: `${done} из ${items.length}${tail}` }
       }
 

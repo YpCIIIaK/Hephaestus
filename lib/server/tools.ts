@@ -183,6 +183,8 @@ export async function runTool(name: string, rawArgs: string | Record<string, unk
       case 'read_file': {
         const start = n('start_line') ?? 1
         const r = await readWorkspaceFile(s('path'), { startLine: n('start_line'), endLine: n('end_line') })
+        // raw — для блоков Кузницы: содержимое как есть, без номеров строк
+        if (args.raw === true) return { ok: true, output: r.content }
         const range = n('start_line') || n('end_line') ? `, показаны строки ${start}–${start + r.content.split('\n').length - 1}` : ''
         return { ok: true, output: clip(`${r.path} (${r.totalLines} строк${range})\n\n${numberLines(r.content, start)}`) }
       }
